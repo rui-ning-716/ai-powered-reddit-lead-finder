@@ -1,3 +1,8 @@
+
+## Demo
+
+Watch the 1-minute setup walkthrough: [Reddit Lead Finder Campaign Setup Guide](https://app.trupeer.ai/view/FdXsaIf6o/reddit-lead-finder)
+
 # Reddit Lead Finder
 
 Find Reddit users who are already looking for what you sell.
