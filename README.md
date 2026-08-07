@@ -1,3 +1,4 @@
+# Reddit Lead Finder
 
 ## Demo
 
@@ -13,7 +14,6 @@ Watch the 1-minute setup walkthrough: [Reddit Lead Finder Campaign Setup Guide](
 
 ![Campaign setup](campaign-setup.png)
 
-# Reddit Lead Finder
 
 Find Reddit users who are already looking for what you sell.
 
