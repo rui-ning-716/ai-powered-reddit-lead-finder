@@ -1,0 +1,28 @@
+name: API Observability
+product:
+  name: TraceKit
+  description: An open-source API observability tool for debugging latency and failed requests.
+  website: https://example.com
+  value_propositions: [Request tracing, Self-hosted deployment, OpenTelemetry support]
+  limitations: [Requires Docker or Kubernetes]
+  target_customers: [Backend engineers, Platform teams, DevOps engineers]
+market:
+  countries: []
+  languages: [English]
+  customer_signals: [backend, API, Kubernetes, OpenTelemetry, latency]
+  exclude_terms: []
+  require_market_signal: false
+discovery:
+  keywords: ['"API observability"', '"debug API latency"', '"OpenTelemetry alternative"']
+  subreddits: [programming, devops, selfhosted]
+  excluded_subreddits: []
+qualification:
+  minimum_lead_score: 0.70
+  positive_signals: [Actively debugging a problem, Comparing tools, Wants self-hosting]
+  negative_signals: [Tutorial promotion, Job listing, Resolved issue]
+engagement:
+  allow_brand_mentions: true
+  allow_links: false
+  tone: Technical, direct, and transparent
+  disclosure: I contribute to TraceKit.
+  max_words: 160

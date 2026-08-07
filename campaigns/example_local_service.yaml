@@ -1,0 +1,28 @@
+name: Local Home Cleaning
+product:
+  name: BrightHome Cleaning
+  description: A residential cleaning service offering recurring and move-out cleaning.
+  website: https://example.com
+  value_propositions: [Online booking, Background-checked cleaners, Transparent pricing]
+  limitations: [Only available in Austin, Texas]
+  target_customers: [Renters, Homeowners, Property managers]
+market:
+  countries: [United States]
+  languages: [English]
+  customer_signals: [Austin, Round Rock, Cedar Park, Texas]
+  exclude_terms: [UK, Canada, Australia]
+  require_market_signal: true
+discovery:
+  keywords: ['"cleaning service Austin"', '"move out cleaner Austin"', '"house cleaner recommendation"']
+  subreddits: [Austin, AskAustin]
+  excluded_subreddits: []
+qualification:
+  minimum_lead_score: 0.75
+  positive_signals: [Asking for a local recommendation, Moving soon, Ready to book]
+  negative_signals: [Looking for a cleaning job, DIY cleaning advice, Vendor promotion]
+engagement:
+  allow_brand_mentions: true
+  allow_links: false
+  tone: Friendly, practical, and transparent
+  disclosure: I am affiliated with BrightHome Cleaning.
+  max_words: 120

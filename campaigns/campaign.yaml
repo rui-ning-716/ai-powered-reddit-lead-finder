@@ -1,0 +1,58 @@
+name: AI Meeting Notes
+product:
+  name: ExampleNotes
+  description: An AI meeting assistant that transcribes calls, summarizes decisions, and extracts action items.
+  website: https://example.com
+  value_propositions:
+    - Automatic meeting summaries
+    - Action item extraction
+    - Works with Zoom and Google Meet
+  limitations:
+    - Does not support offline meetings
+  target_customers:
+    - Startup founders
+    - Product managers
+    - Remote teams
+  competitors:
+    - Otter.ai
+    - Fireflies.ai
+market:
+  countries: [United States, Canada]
+  languages: [English]
+  customer_signals: [startup, founder, product manager, remote team, SaaS]
+  exclude_terms: []
+  require_market_signal: false
+discovery:
+  keywords:
+    - '"meeting notes tool"'
+    - '"AI meeting assistant"'
+    - '"Otter alternative"'
+    - '"meeting action items"'
+  subreddits: [all]
+  adjacent_subreddits: [SaaS, productivity]
+  watch_only_subreddits: [selfpromotion]
+  community_notes: Review each subreddit's promotion and disclosure rules before replying.
+  excluded_subreddits: [selfpromotion]
+  lookback: week
+  sort: new
+  limit_per_keyword: 25
+qualification:
+  minimum_lead_score: 0.72
+  positive_signals:
+    - Asking for recommendations
+    - Comparing products
+    - Unhappy with a current solution
+    - Has an urgent workflow problem
+    - Shows willingness to pay
+  negative_signals:
+    - Job listing
+    - News or promotional post
+    - Academic discussion without a product need
+    - Problem already solved
+  max_post_age_days: 7
+engagement:
+  allow_brand_mentions: true
+  allow_links: false
+  tone: Helpful, concise, transparent, and non-salesy
+  disclosure: I work on ExampleNotes, so I may be biased.
+  max_words: 140
