@@ -95,7 +95,6 @@ Start with Docker:
 docker compose up --build
 ```
 
-Open `http://localhost:8000`.
 
 Open `http://localhost:8000`. On a fresh installation, enter a public product
 website and select **Generate product setup**. Review the AI draft before saving.
