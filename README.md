@@ -302,7 +302,7 @@ The dashboard records:
 - generated draft and selected strategy
 - all component scores and detected signals
 
-V0.2 captures this cleanly but does not retrain a model automatically.
+The current version captures this feedback cleanly but does not retrain a model automatically.
 
 ## Dashboard access protection
 
