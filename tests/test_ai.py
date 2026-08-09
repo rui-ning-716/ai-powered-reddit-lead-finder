@@ -52,6 +52,52 @@ class AITest(unittest.TestCase):
         result = validate_qualification(payload)
         self.assertEqual(result["lead_score"], 0.71)
 
+    def test_campaign_score_weights_and_penalties_change_final_score(self):
+        campaign = get_campaign().model_copy(deep=True)
+        weights = campaign.qualification.score_model.weights
+        weights.relevance = 0
+        weights.purchase_intent = 0
+        weights.product_fit = 100
+        weights.urgency = 0
+        weights.reachability = 0
+        campaign.qualification.score_model.promotion_risk_penalty = 0
+        campaign.qualification.score_model.market_mismatch_penalty = 0
+        payload = {
+            "is_qualified": True, "lead_score": 0.01, "market_fit": True,
+            "relevance_score": 0.1, "purchase_intent_score": 0.2,
+            "product_fit_score": 0.83, "urgency_score": 0.4,
+            "reachability_score": 0.5, "promotion_risk_score": 1,
+            "market_fit_score": 0.2, "positive_signals": [], "negative_signals": [],
+        }
+        result = validate_qualification(payload, campaign=campaign)
+        self.assertEqual(result["lead_score"], 0.83)
+        self.assertEqual(result["score_breakdown"]["normalized_weights"]["product_fit"], 1.0)
+
+    def test_campaign_score_model_supports_dimension_subsignals(self):
+        campaign = get_campaign().model_copy(deep=True)
+        signals = campaign.qualification.score_model.dimension_signals
+        signals.purchase_intent = ["Pricing page or a stated budget", "Actively comparing vendors"]
+        self.assertEqual(
+            campaign.model_dump()["qualification"]["score_model"]["dimension_signals"]["purchase_intent"],
+            ["Pricing page or a stated budget", "Actively comparing vendors"],
+        )
+
+    def test_ai_adaptive_priority_multiplies_positive_score_by_confidence(self):
+        campaign = get_campaign().model_copy(deep=True)
+        campaign.qualification.scoring_mode = "ai_adaptive"
+        campaign.qualification.score_model.promotion_risk_penalty = 0
+        campaign.qualification.score_model.market_mismatch_penalty = 0
+        payload = {
+            "is_qualified": True, "market_fit": True,
+            "relevance_score": 1, "purchase_intent_score": 1,
+            "product_fit_score": 1, "urgency_score": 1,
+            "reachability_score": 1, "promotion_risk_score": 0,
+            "market_fit_score": 1, "evidence_confidence_score": 0.6,
+            "positive_signals": [], "negative_signals": [],
+        }
+        result = validate_qualification(payload, campaign=campaign)
+        self.assertEqual(result["lead_score"], 0.6)
+
     def test_urgency_is_capped_without_explicit_time_signal(self):
         payload = {
             "is_qualified": True, "lead_score": 0.99, "market_fit": True,

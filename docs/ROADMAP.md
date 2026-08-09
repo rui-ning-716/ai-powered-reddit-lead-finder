@@ -1,6 +1,6 @@
 # Roadmap
 
-Reddit Lead Finder 0.2 is intended for operator-managed paid pilots. It is not yet a
+Reddit Lead Finder 0.5 is intended for operator-managed paid pilots. It is not yet a
 public multi-tenant SaaS.
 
 ## Pilot-ready foundation

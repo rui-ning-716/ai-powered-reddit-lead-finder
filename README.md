@@ -1,20 +1,5 @@
 # Reddit Lead Finder
 
-## Demo
-
-Watch the 1-minute setup walkthrough: [Reddit Lead Finder Campaign Setup Guide](https://app.trupeer.ai/view/FdXsaIf6o/reddit-lead-finder)
-
-## Preview
-
-### Lead review dashboard
-
-![Lead review dashboard](dashboard-preview.png)
-
-### Campaign setup
-
-![Campaign setup](campaign-setup.png)
-
-
 Find Reddit users who are already looking for what you sell.
 
 Reddit Lead Finder is an open-source, self-hosted, human-in-the-loop Reddit lead
@@ -22,6 +7,23 @@ discovery system. It monitors product-relevant conversations, filters for
 market and customer fit, scores buying intent, recommends how to engage,
 drafts a useful reply, and sends qualified opportunities to Slack or email.
 It never auto-posts.
+
+## New in V0.5
+
+Fresh installations now open on a clean website-first onboarding screen. Enter a
+public product URL and AI drafts the complete six-step Product Setup for human
+review: Product, Market, Discovery, Qualification, Engagement, and Review & Test.
+No demo product, default language, brand mention, link permission, or Reddit scan
+is created automatically.
+
+If a valid website blocks automated reading, add a concise product description
+under optional product notes. AI can then draft the setup from those notes while
+marking assumptions for review.
+
+The website reader only accepts public HTTP and HTTPS pages. It blocks private
+network addresses, validates redirects, limits response size and page count, and
+uses timeouts. Generated community names are candidates, not claims that a
+subreddit permits promotion. The operator must still review current rules.
 
 ## Why Reddit Lead Finder
 
@@ -48,11 +50,14 @@ data.
 - Managed multi-campaign workspaces with campaign-level data isolation
 - Six-step browser onboarding for Product, Market, Discovery, Qualification,
   Engagement, and Review & Test
+- Website-to-setup AI generation across all six sections
+- Clean empty first run with no preloaded demo product
 - AI-assisted keyword, subreddit, and buying-signal suggestions
 - Structured core, adjacent, watch-only, and excluded community mapping
 - Sample-post testing before the first real scan
-- Configurable keywords, subreddits, exclusions, lookback, and thresholds
+- Configurable keywords, subreddits, exclusions, lookback, thresholds, score weights, and risk deductions
 - Explainable multi-dimensional lead scoring
+- Fine-grained AI evaluation signals under each scoring dimension
 - Strategy selection before draft generation
 - Brand disclosure and link controls
 - Original post excerpts and browser-local timestamps in the review dashboard
@@ -81,7 +86,7 @@ Add your OpenAI API key and a descriptive Reddit User-Agent to `.env`:
 
 ```text
 OPENAI_API_KEY=your_key_here
-REDDIT_USER_AGENT="reddit-lead-finder/0.2 (contact: you@example.com)"
+REDDIT_USER_AGENT="reddit-lead-finder/0.5 (contact: you@example.com)"
 ```
 
 Start with Docker:
@@ -92,9 +97,10 @@ docker compose up --build
 
 Open `http://localhost:8000`.
 
-Open `http://localhost:8000/campaign` to configure the first campaign in the
-browser. Use **+ New** to create a separate product or client workspace. Each
-workspace keeps its own YAML configuration, leads, and report.
+Open `http://localhost:8000`. On a fresh installation, enter a public product
+website and select **Generate product setup**. Review the AI draft before saving.
+Use **+ Add product** to create another isolated product workspace. Each workspace
+keeps its own YAML configuration, reply opportunities, and performance report.
 
 To explore the dashboard without calling Reddit or an LLM, seed one synthetic
 lead before starting the server:
@@ -119,22 +125,30 @@ The scheduler scans every 30 minutes by default. To trigger a manual scan:
 curl -X POST http://localhost:8000/scan-now
 ```
 
-## Configure a campaign
+## Configure a product
 
-### Browser setup
+### Website-first browser setup
 
-The Campaign page lets a user complete the full setup without editing YAML:
+The Product Setup page lets a user complete the workflow without editing YAML.
+For a new product, enter its public website. Reddit Lead Finder reads a limited
+set of public same-domain product pages, then AI drafts all six sections:
 
 1. Describe the product, value propositions, target customers, and limitations.
 2. Choose markets, languages, customer signals, and exclusions.
-3. Add queries and subreddits, or ask AI to suggest them.
-4. Select a qualification preset and customize positive and negative signals.
+3. Review varied lexical search phrases and candidate subreddits.
+4. Review positive and negative qualification signals and the AI-adaptive threshold.
 5. Set brand, link, disclosure, tone, and length guardrails.
 6. Paste a sample Reddit post to preview scores, strategy, and draft.
 
-Use **Save campaign** to update the current workspace YAML or **Save and run
-scan** to save and immediately start a manual scan. Saving is rejected while
+Use **Save product setup** to update the current workspace YAML or **Save and find
+opportunities** to save and immediately start a manual scan. Saving is rejected while
 another scan is active, preventing a scan from mixing two configurations.
+
+Reddit RSS search is lexical. Search queries do not need to match an entire post
+title, but Reddit first retrieves posts based on the words and phrases in each
+query. Quotation marks make a multi-word phrase more exact. AI evaluates meaning
+and buying intent only after Reddit returns a candidate post, so use several ways
+a buyer might describe the same problem.
 
 ### YAML setup
 
@@ -182,6 +196,23 @@ qualification:
   negative_signals:
     - Job listing
     - Promotional post
+  score_model:
+    # Relative importance. Values are normalized automatically.
+    weights:
+      relevance: 25
+      purchase_intent: 30
+      product_fit: 25
+      urgency: 10
+      reachability: 10
+    # Deductions expressed as percentage points (0 to 100).
+    promotion_risk_penalty: 15
+    market_mismatch_penalty: 10
+    # Optional campaign-specific evidence to assess beneath each dimension.
+    dimension_signals:
+      purchase_intent:
+        - Explicitly asks for recommendations or alternatives
+        - Is comparing, replacing, or evaluating a solution
+        - Mentions a budget, trial, buying process, or timeline
 
 engagement:
   allow_brand_mentions: true
@@ -197,12 +228,12 @@ Three templates are included:
 - `example_local_service.yaml`
 - `example_developer_tool.yaml`
 
-## Managed multi-campaign workspace
+## Multiple product workspaces
 
-V0.2.2 can run several client or product campaigns in one operator workspace.
-Use **+ New** in the dashboard or Campaign page to create a separate workspace.
-Each workspace gets its own campaign YAML file, lead queue, notifications, and
-report. The scheduler scans every configured campaign, and the same Reddit post can
+The application can run several client or product setups in one operator workspace.
+Use **+ Add product** from Reply Opportunities or Product Setup to create a separate
+workspace. Each workspace gets its own YAML file, opportunity queue, notifications,
+and Performance page. The scheduler scans every configured product, and the same Reddit post can
 be evaluated independently for two products without mixing their histories.
 
 For an existing advanced deployment, `CAMPAIGN_PATHS` remains supported as a manual
@@ -239,9 +270,12 @@ The LLM returns separate scores instead of treating keyword relevance as intent:
 | Market fit | Does the author match the configured market? |
 | Promotion risk | Would a brand response feel intrusive? |
 
-Reddit Lead Finder recalculates the final score in code using 25% relevance, 30%
-purchase intent, 25% product fit, 10% urgency, and 10% reachability, then applies
-market-fit and promotion-risk penalties. The LLM cannot override this formula.
+Reddit Lead Finder recalculates the final score in code. Each campaign can set the
+relative weight of relevance, purchase intent, product fit, urgency, and
+reachability. The app normalizes these values automatically, then applies the
+campaign's promotion-risk and market-mismatch deductions. It can also store custom
+sub-signals beneath each dimension, so a team can define what "purchase intent" or
+"product fit" means for its own product. The LLM cannot override the final formula.
 Urgency is capped at 0.60 unless the original post contains an explicit deadline
 or time-sensitive phrase. The final threshold comes from the campaign.
 

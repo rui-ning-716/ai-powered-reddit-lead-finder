@@ -54,6 +54,10 @@ qualification:
     - Academic discussion without a product need
     - Problem already solved
   max_post_age_days: 7
+  score_model:
+    weights: {relevance: 25, purchase_intent: 30, product_fit: 25, urgency: 10, reachability: 10}
+    promotion_risk_penalty: 15
+    market_mismatch_penalty: 10
 
 engagement:
   allow_brand_mentions: true

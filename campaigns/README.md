@@ -11,6 +11,12 @@ Keep product limitations accurate. These constraints are provided to the LLM so
 it can reject leads the product cannot serve. Use `exclude_terms` for strong
 deterministic exclusions and `negative_signals` for contextual LLM judgment.
 
+Each campaign can also set `qualification.score_model`: relative weights for
+relevance, purchase intent, product fit, urgency, and reachability; deductions
+for promotion risk and market mismatch; and optional evidence signals beneath
+each dimension. The values are normalized automatically, so weights do not need
+to total 100.
+
 For a managed workspace, create one YAML file per client and enable only those
 files with `CAMPAIGN_PATHS`. A file's name becomes its stable campaign key, so
 use distinct names such as `acme-crm.yaml` and `northstar-notes.yaml`.

@@ -20,6 +20,10 @@ qualification:
   minimum_lead_score: 0.75
   positive_signals: [Asking for a local recommendation, Moving soon, Ready to book]
   negative_signals: [Looking for a cleaning job, DIY cleaning advice, Vendor promotion]
+  score_model:
+    weights: {relevance: 25, purchase_intent: 30, product_fit: 25, urgency: 10, reachability: 10}
+    promotion_risk_penalty: 15
+    market_mismatch_penalty: 10
 engagement:
   allow_brand_mentions: true
   allow_links: false

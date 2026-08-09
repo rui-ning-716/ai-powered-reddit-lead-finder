@@ -36,7 +36,8 @@ playbook.
 
 ## 3. Create and enable a client campaign
 
-Open the Campaign page and click **+ New**. Name the client campaign, complete
+Open Product Setup and click **+ Add product**. Enter the client's public website,
+generate the six-section draft, and review every field. Complete
 all six setup steps, and test several historical posts before the first live
 scan. The workspace automatically receives its own campaign YAML file, lead
 queue, and report. No environment-variable changes or restart are required.

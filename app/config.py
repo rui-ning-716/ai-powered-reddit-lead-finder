@@ -12,12 +12,10 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MODEL")
 
     reddit_user_agent: str = Field(
-        default="reddit-lead-finder/0.2 (human-in-the-loop lead discovery)",
+        default="reddit-lead-finder/0.5 (human-in-the-loop reply discovery)",
         alias="REDDIT_USER_AGENT",
     )
-    campaign_path: str = Field(
-        default="campaigns/campaign.yaml", alias="CAMPAIGN_PATH"
-    )
+    campaign_path: str = Field(default="", alias="CAMPAIGN_PATH")
     campaign_paths: str = Field(default="", alias="CAMPAIGN_PATHS")
 
     search_interval_minutes: int = Field(default=30, alias="SEARCH_INTERVAL_MINUTES")
@@ -64,9 +62,16 @@ class Settings(BaseSettings):
 
     @property
     def configured_campaign_paths(self) -> list[str]:
-        """Return the managed campaigns, preserving V0.1 single-campaign behavior."""
+        """Return explicitly configured legacy campaign files.
+
+        New V0.5 installations start with an empty product workspace. Existing
+        installations can still opt into the original single-file behavior by
+        keeping CAMPAIGN_PATH in their .env file.
+        """
         paths = [item.strip() for item in self.campaign_paths.split(",") if item.strip()]
-        return paths or [self.campaign_path]
+        if paths:
+            return paths
+        return [self.campaign_path.strip()] if self.campaign_path.strip() else []
 
 
 @lru_cache

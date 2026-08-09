@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.ai import (
     decide_response_strategy,
     evaluate_opportunity,
+    generate_campaign_setup_from_website,
     generate_personalized_comment,
     suggest_campaign_discovery,
 )
@@ -22,15 +23,16 @@ from app.campaign import (
     save_campaign,
 )
 from app.campaign_ui import render_campaign_wizard
-from app.dashboard import render_dashboard
+from app.dashboard import render_dashboard, render_first_run
 from app.db import init_db, lead_stats, list_leads, mark_draft_status, move_draft_to_campaign
 from app.report import render_report, report_csv
 from app.scanner import run_scan, run_when_scan_idle
+from app.website import WebsiteReadError, normalize_website_url, research_product_website
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Reddit Lead Finder", version="0.2.2")
+app = FastAPI(title="Reddit Lead Finder", version="0.5.0")
 scheduler = BackgroundScheduler()
 
 
@@ -87,6 +89,12 @@ class CampaignTestRequest(BaseModel):
 
 class CampaignCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+    campaign: Campaign | None = None
+
+
+class ProductSetupGenerateRequest(BaseModel):
+    website_url: str = Field(min_length=3, max_length=2000)
+    product_notes: str = Field(default="", max_length=4000)
 
 
 class LeadCampaignMove(BaseModel):
@@ -125,6 +133,8 @@ def health() -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(campaign: str | None = None) -> str:
+    if not get_campaign_records():
+        return render_first_run()
     record = _campaign_record_or_404(campaign)
     return render_dashboard(
         leads=[dict(row) for row in list_leads(limit=100, campaign_key=record.key)],
@@ -170,13 +180,63 @@ def campaigns() -> list[dict]:
 @app.post("/api/campaigns", status_code=201)
 def create_campaign(request: CampaignCreateRequest) -> dict:
     try:
-        record = create_campaign_workspace(request.name)
+        record = create_campaign_workspace(request.name, campaign=request.campaign)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "campaign": record.campaign.model_dump(mode="json"),
         "campaign_key": record.key,
         "campaign_path": str(record.path),
+    }
+
+
+@app.post("/api/product-setup/generate")
+def generate_product_setup(request: ProductSetupGenerateRequest) -> dict:
+    _require_openai_key()
+    try:
+        research = research_product_website(request.website_url)
+    except WebsiteReadError as exc:
+        if not request.product_notes.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{exc} Add a short product description under optional product notes "
+                    "and try again."
+                ),
+            ) from exc
+        try:
+            normalized_url = normalize_website_url(request.website_url)
+        except WebsiteReadError as url_exc:
+            raise HTTPException(status_code=400, detail=str(url_exc)) from url_exc
+        generated = generate_campaign_setup_from_website(
+            website_url=normalized_url,
+            website_research=(
+                "The public website could not be read. Use only the operator notes "
+                "below and mark uncertain assumptions for review."
+            ),
+            product_notes=request.product_notes,
+        )
+        return {
+            **generated,
+            "source": {
+                "requested_url": normalized_url,
+                "final_url": normalized_url,
+                "pages_read": 0,
+                "warning": str(exc),
+            },
+        }
+    generated = generate_campaign_setup_from_website(
+        website_url=research.final_url,
+        website_research=research.as_prompt_text(),
+        product_notes=request.product_notes,
+    )
+    return {
+        **generated,
+        "source": {
+            "requested_url": research.requested_url,
+            "final_url": research.final_url,
+            "pages_read": len(research.pages),
+        },
     }
 
 
@@ -257,6 +317,8 @@ def leads(limit: int = 50, campaign: str | None = None) -> list[dict]:
 
 @app.get("/report", response_class=HTMLResponse)
 def report(campaign: str | None = None) -> str:
+    if not get_campaign_records():
+        return render_first_run()
     record = _campaign_record_or_404(campaign)
     return render_report(
         record.campaign,
@@ -329,12 +391,15 @@ def _require_openai_key() -> None:
     if not get_settings().openai_api_key:
         raise HTTPException(
             status_code=400,
-            detail="OPENAI_API_KEY is required for AI suggestions and sample tests.",
+            detail=(
+                "OPENAI_API_KEY is required to generate a product setup, "
+                "refresh AI suggestions, or run an AI sample test."
+            ),
         )
 
 
 def _campaign_record_or_404(key: str | None):
     try:
         return get_campaign_record(key)
-    except KeyError as exc:
+    except (KeyError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -1,7 +1,7 @@
 """Insert one synthetic lead so the dashboard can be evaluated without Reddit or an API key."""
 
 from app.db import init_db, save_draft, save_post
-from app.campaign import get_campaign_record
+from app.campaign import create_campaign_workspace, get_campaign_records, load_campaign
 
 
 POST = {
@@ -35,7 +35,12 @@ QUALIFICATION = {
 
 if __name__ == "__main__":
     init_db()
-    campaign_key = get_campaign_record().key
+    records = get_campaign_records()
+    if records:
+        campaign_key = records[0].key
+    else:
+        demo = load_campaign("campaigns/example_saas.yaml")
+        campaign_key = create_campaign_workspace(demo.name, campaign=demo).key
     save_post(POST, campaign_key=campaign_key)
     draft_id = save_draft(
         reddit_id=POST["reddit_id"],

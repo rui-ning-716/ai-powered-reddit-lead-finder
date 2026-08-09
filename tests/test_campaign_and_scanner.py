@@ -38,12 +38,22 @@ class CampaignTest(unittest.TestCase):
 
     def test_campaign_can_be_validated_and_atomically_saved(self):
         source = load_campaign("campaigns/example_saas.yaml")
+        source.qualification.score_model.weights.purchase_intent = 55
+        source.qualification.score_model.dimension_signals.purchase_intent = [
+            "Mentions a pricing page",
+            "Comparing vendors before a deadline",
+        ]
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "saved.yaml"
             saved = save_campaign(source, target, allowed_root=tmp)
             loaded = load_campaign(target)
         self.assertEqual(saved.product.name, loaded.product.name)
         self.assertEqual(loaded.discovery.keywords, source.discovery.keywords)
+        self.assertEqual(loaded.qualification.score_model.weights.purchase_intent, 55)
+        self.assertEqual(
+            loaded.qualification.score_model.dimension_signals.purchase_intent[0],
+            "Mentions a pricing page",
+        )
 
     def test_campaign_save_rejects_path_outside_allowed_root(self):
         source = load_campaign("campaigns/example_saas.yaml")
@@ -56,7 +66,14 @@ class CampaignTest(unittest.TestCase):
         for label in ["Product", "Market", "Discovery", "Qualification", "Engagement", "Review & Test"]:
             self.assertIn(label, html)
         self.assertIn("/api/campaign/test", html)
-        self.assertIn("Save and run scan", html)
+        self.assertIn("Save and find opportunities", html)
+        self.assertIn("AI adaptive scoring is on", html)
+        self.assertIn("Generate the full setup from a product website", html)
+        self.assertIn("Search queries are Reddit keyword phrases", html)
+        self.assertIn("Reply Opportunities", html)
+        self.assertIn("Product Setup", html)
+        self.assertIn("Performance", html)
+        self.assertNotIn("Relevance weight", html)
 
     def test_dashboard_shows_post_excerpt_and_localizes_timestamp(self):
         lead = {

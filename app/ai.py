@@ -33,6 +33,7 @@ QUALIFICATION_SCHEMA = {
             "urgency_score": {"type": "number", "minimum": 0, "maximum": 1},
             "reachability_score": {"type": "number", "minimum": 0, "maximum": 1},
             "promotion_risk_score": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence_confidence_score": {"type": "number", "minimum": 0, "maximum": 1},
             "market_fit": {"type": "boolean"},
             "market_fit_score": {"type": "number", "minimum": 0, "maximum": 1},
             "location": {"type": "string"},
@@ -47,7 +48,7 @@ QUALIFICATION_SCHEMA = {
         "required": [
             "is_qualified", "lead_score", "relevance_score",
             "purchase_intent_score", "product_fit_score", "urgency_score",
-            "reachability_score", "promotion_risk_score", "market_fit",
+            "reachability_score", "promotion_risk_score", "evidence_confidence_score", "market_fit",
             "market_fit_score", "location", "customer_type", "inferred_intent",
             "urgency", "positive_signals", "negative_signals", "skip_reason", "reason",
         ],
@@ -111,6 +112,108 @@ CAMPAIGN_SUGGESTION_SCHEMA = {
     },
 }
 
+CAMPAIGN_SETUP_SCHEMA = {
+    "name": "product_website_campaign_setup",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "name": {"type": "string"},
+            "product": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "value_propositions": {"type": "array", "items": {"type": "string"}},
+                    "limitations": {"type": "array", "items": {"type": "string"}},
+                    "target_customers": {"type": "array", "items": {"type": "string"}},
+                    "competitors": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": [
+                    "name", "description", "value_propositions", "limitations",
+                    "target_customers", "competitors",
+                ],
+            },
+            "market": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "countries": {"type": "array", "items": {"type": "string"}},
+                    "languages": {"type": "array", "items": {"type": "string"}},
+                    "customer_signals": {"type": "array", "items": {"type": "string"}},
+                    "exclude_terms": {"type": "array", "items": {"type": "string"}},
+                    "require_market_signal": {"type": "boolean"},
+                },
+                "required": [
+                    "countries", "languages", "customer_signals",
+                    "exclude_terms", "require_market_signal",
+                ],
+            },
+            "discovery": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "keywords": {"type": "array", "items": {"type": "string"}},
+                    "subreddits": {"type": "array", "items": {"type": "string"}},
+                    "excluded_subreddits": {"type": "array", "items": {"type": "string"}},
+                    "adjacent_subreddits": {"type": "array", "items": {"type": "string"}},
+                    "watch_only_subreddits": {"type": "array", "items": {"type": "string"}},
+                    "community_notes": {"type": "string"},
+                    "lookback": {"type": "string", "enum": ["day", "week", "month", "year"]},
+                    "sort": {"type": "string", "enum": ["new", "relevance", "top"]},
+                    "limit_per_keyword": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
+                "required": [
+                    "keywords", "subreddits", "excluded_subreddits",
+                    "adjacent_subreddits", "watch_only_subreddits", "community_notes",
+                    "lookback", "sort", "limit_per_keyword",
+                ],
+            },
+            "qualification": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "minimum_lead_score": {"type": "number", "minimum": 0, "maximum": 1},
+                    "positive_signals": {"type": "array", "items": {"type": "string"}},
+                    "negative_signals": {"type": "array", "items": {"type": "string"}},
+                    "max_post_age_days": {"type": "integer", "minimum": 1, "maximum": 365},
+                },
+                "required": [
+                    "minimum_lead_score", "positive_signals", "negative_signals",
+                    "max_post_age_days",
+                ],
+            },
+            "engagement": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "tone": {"type": "string"},
+                    "disclosure": {"type": "string"},
+                    "max_words": {"type": "integer", "minimum": 30, "maximum": 400},
+                },
+                "required": ["tone", "disclosure", "max_words"],
+            },
+            "sample_post": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "subreddit": {"type": "string"},
+                    "title": {"type": "string"},
+                    "body": {"type": "string"},
+                },
+                "required": ["subreddit", "title", "body"],
+            },
+            "review_notes": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": [
+            "name", "product", "market", "discovery", "qualification",
+            "engagement", "sample_post", "review_notes",
+        ],
+    },
+}
+
 QUALIFICATION_PROMPT = """
 Evaluate whether this Reddit post is a real, reachable lead for the configured product.
 
@@ -128,9 +231,12 @@ promotional posts, generic discussion, solved problems, and incidental mentions 
 normally receive low purchase-intent scores. Use only evidence in the post and campaign.
 Do not invent location, budget, company size, deadlines, or product capabilities.
 
-Calculate lead_score consistently from the evidence. A useful guide is:
-25% relevance + 30% purchase intent + 25% product fit + 10% urgency +
-10% reachability, then reduce for promotion risk or poor market fit.
+For AI adaptive scoring, infer the product-specific sub-signals internally from
+the campaign and the post. Do not expose those sub-signals to the user. Return
+an evidence_confidence_score based on how explicit, complete, and internally
+consistent the evidence in the post is. The application will deterministically
+calculate the final priority after your assessment, so return honest independent
+component scores rather than trying to game a total.
 """.strip()
 
 STRATEGY_PROMPT = """
@@ -193,23 +299,39 @@ def validate_qualification(
     campaign = campaign or get_campaign()
     score_fields = [
         "relevance_score", "purchase_intent_score", "product_fit_score",
-        "urgency_score", "reachability_score", "promotion_risk_score", "market_fit_score",
+        "urgency_score", "reachability_score", "promotion_risk_score", "evidence_confidence_score", "market_fit_score",
     ]
     result = dict(payload)
+    # Preserve deterministic results for legacy payloads created before adaptive confidence.
+    if "evidence_confidence_score" not in result:
+        result["evidence_confidence_score"] = 1.0
     for field in score_fields:
         result[field] = max(0.0, min(1.0, float(result.get(field) or 0)))
     if post is not None and not _has_explicit_urgency(post):
         result["urgency_score"] = min(result["urgency_score"], 0.6)
+    score_model = campaign.qualification.score_model
+    weights = score_model.weights.normalized()
+    positive_score = sum(
+        weights[name] * result[f"{name}_score"] for name in weights
+    )
+    promotion_risk_deduction = (
+        score_model.promotion_risk_penalty / 100
+    ) * result["promotion_risk_score"]
+    market_mismatch_deduction = (
+        score_model.market_mismatch_penalty / 100
+    ) * (1.0 - result["market_fit_score"])
+    confidence = result["evidence_confidence_score"] if campaign.qualification.scoring_mode == "ai_adaptive" else 1.0
     weighted_score = (
-        0.25 * result["relevance_score"]
-        + 0.30 * result["purchase_intent_score"]
-        + 0.25 * result["product_fit_score"]
-        + 0.10 * result["urgency_score"]
-        + 0.10 * result["reachability_score"]
-        - 0.15 * result["promotion_risk_score"]
-        - 0.10 * (1.0 - result["market_fit_score"])
+        positive_score * confidence - promotion_risk_deduction - market_mismatch_deduction
     )
     result["lead_score"] = round(max(0.0, min(1.0, weighted_score)), 3)
+    result["score_breakdown"] = {
+        "normalized_weights": {name: round(value, 4) for name, value in weights.items()},
+        "positive_score": round(positive_score, 4),
+        "evidence_confidence": round(confidence, 4),
+        "promotion_risk_deduction": round(promotion_risk_deduction, 4),
+        "market_mismatch_deduction": round(market_mismatch_deduction, 4),
+    }
     threshold = campaign.qualification.minimum_lead_score
     result["is_qualified"] = bool(
         result.get("is_qualified")
@@ -353,6 +475,139 @@ Do not invent product capabilities or supported markets.
         "positive_signals": [str(x) for x in result.get("positive_signals", [])][:10],
         "negative_signals": [str(x) for x in result.get("negative_signals", [])][:10],
     }
+
+
+def generate_campaign_setup_from_website(
+    website_url: str,
+    website_research: str,
+    product_notes: str = "",
+) -> dict:
+    """Generate a conservative, fully editable product setup from public website text."""
+    prompt = """
+Create a complete Reddit reply-opportunity setup from the supplied public product website.
+This is an editable draft for a human marketing or sales operator, not permission to post.
+
+Product:
+- Use only capabilities and positioning supported by the source text.
+- Identify concise value propositions, target customers, likely alternatives, and limitations.
+- When a limitation or competitor is uncertain, use cautious wording rather than inventing facts.
+
+Market:
+- Only name supported countries or regions when the source provides evidence.
+- Use an empty country list when geography is unknown or appears global.
+- Infer site languages from the supplied text. Do not assume the customer's location.
+
+Discovery:
+- Return 8 to 12 diverse Reddit search queries. Reddit search is lexical, not semantic.
+- Cover brand, category, recommendation, alternative, comparison, pain-point, and replacement language.
+- Use quotes only for exact brand or established multi-word product phrases. Do not quote every query.
+- Suggest plausible subreddit names without r/. These are candidates, not verified rule claims.
+- Community notes must tell the operator to verify current subreddit rules before replying.
+
+Qualification:
+- Define concrete positive buying signals and negative/noise signals for this product.
+- Use a balanced default threshold unless the product is unusually sensitive or regulated.
+
+Engagement:
+- Write a helpful, concise, peer-to-peer tone instruction.
+- Provide a transparent affiliation disclosure template for the product team.
+- The application will keep brand mentions and direct links disabled until a human enables them.
+
+Review and test:
+- Create one realistic sample Reddit post that should be a plausible qualified opportunity.
+- Add concise review notes for uncertain market, product, or community assumptions.
+
+Do not claim that a subreddit allows promotion. Do not fabricate prices, availability, results,
+certifications, customer counts, or legal claims.
+""".strip()
+    notes = product_notes.strip()[:4000]
+    user_prompt = (
+        f"Website to use in the setup: {website_url}\n\n"
+        f"Optional operator notes:\n{notes or '(none)'}\n\n"
+        f"Public website research:\n{website_research}"
+    )
+    raw = json.loads(_chat_json(CAMPAIGN_SETUP_SCHEMA, prompt, user_prompt, 0.25))
+    product = raw.get("product") or {}
+    market = raw.get("market") or {}
+    discovery = raw.get("discovery") or {}
+    qualification = raw.get("qualification") or {}
+    engagement = raw.get("engagement") or {}
+    product_name = str(product.get("name") or "").strip()
+    generated_keywords = _clean_generated_list(discovery.get("keywords"), 12)
+    if not generated_keywords and product_name:
+        generated_keywords = [product_name, f"{product_name} alternatives"]
+    payload = {
+        "name": str(raw.get("name") or product.get("name") or "Product setup").strip(),
+        "product": {
+            "name": product_name,
+            "description": str(product.get("description") or "").strip(),
+            "website": website_url,
+            "value_propositions": _clean_generated_list(product.get("value_propositions"), 10),
+            "limitations": _clean_generated_list(product.get("limitations"), 10),
+            "target_customers": _clean_generated_list(product.get("target_customers"), 10),
+            "competitors": _clean_generated_list(product.get("competitors"), 10),
+        },
+        "market": {
+            "countries": _clean_generated_list(market.get("countries"), 15),
+            "languages": _clean_generated_list(market.get("languages"), 10),
+            "customer_signals": _clean_generated_list(market.get("customer_signals"), 15),
+            "exclude_terms": _clean_generated_list(market.get("exclude_terms"), 15),
+            "require_market_signal": bool(market.get("require_market_signal")),
+        },
+        "discovery": {
+            "keywords": generated_keywords,
+            "subreddits": _clean_subreddits(discovery.get("subreddits"), 10),
+            "excluded_subreddits": _clean_subreddits(discovery.get("excluded_subreddits"), 10),
+            "adjacent_subreddits": _clean_subreddits(discovery.get("adjacent_subreddits"), 10),
+            "watch_only_subreddits": _clean_subreddits(discovery.get("watch_only_subreddits"), 10),
+            "community_notes": str(discovery.get("community_notes") or "").strip(),
+            "lookback": discovery.get("lookback") or "week",
+            "sort": discovery.get("sort") or "new",
+            "limit_per_keyword": int(discovery.get("limit_per_keyword") or 25),
+        },
+        "qualification": {
+            "minimum_lead_score": float(qualification.get("minimum_lead_score") or 0.72),
+            "positive_signals": _clean_generated_list(qualification.get("positive_signals"), 12),
+            "negative_signals": _clean_generated_list(qualification.get("negative_signals"), 12),
+            "max_post_age_days": int(qualification.get("max_post_age_days") or 7),
+            "scoring_mode": "ai_adaptive",
+        },
+        "engagement": {
+            "allow_brand_mentions": False,
+            "allow_links": False,
+            "tone": str(engagement.get("tone") or "Helpful, concise, practical, and peer-to-peer.").strip(),
+            "disclosure": str(engagement.get("disclosure") or "").strip(),
+            "max_words": int(engagement.get("max_words") or 140),
+        },
+    }
+    campaign = Campaign.model_validate(payload)
+    sample = raw.get("sample_post") or {}
+    return {
+        "campaign": campaign.model_dump(mode="json"),
+        "sample_post": {
+            "subreddit": str(sample.get("subreddit") or "all").removeprefix("r/").strip(),
+            "title": str(sample.get("title") or "").strip(),
+            "body": str(sample.get("body") or "").strip(),
+        },
+        "review_notes": _clean_generated_list(raw.get("review_notes"), 10),
+    }
+
+
+def _clean_generated_list(value, limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        cleaned = " ".join(str(item).split()).strip()
+        if cleaned and cleaned.casefold() not in {existing.casefold() for existing in result}:
+            result.append(cleaned[:500])
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _clean_subreddits(value, limit: int) -> list[str]:
+    return [item.removeprefix("r/").strip(" /") for item in _clean_generated_list(value, limit) if item.strip(" /")]
 
 
 def validate_comment_for_strategy(

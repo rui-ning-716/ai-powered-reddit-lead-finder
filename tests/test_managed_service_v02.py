@@ -127,9 +127,9 @@ class ManagedWorkspacePresentationTest(unittest.TestCase):
             campaign_key="client-a",
             campaigns=[],
         )
-        self.assertIn("Approved to publish", html)
+        self.assertIn("Ready to reply", html)
         self.assertIn("trackOutcome", html)
-        self.assertIn("+ New", html)
+        self.assertIn("+ Add product", html)
         self.assertIn("/report?campaign=client-a", html)
 
     def test_report_and_csv_include_revenue_pipeline_fields(self):

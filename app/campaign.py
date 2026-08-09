@@ -6,7 +6,7 @@ import re
 import tempfile
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.config import get_settings
 
@@ -23,7 +23,7 @@ class ProductConfig(BaseModel):
 
 class MarketConfig(BaseModel):
     countries: list[str] = Field(default_factory=list)
-    languages: list[str] = Field(default_factory=lambda: ["English"])
+    languages: list[str] = Field(default_factory=list)
     customer_signals: list[str] = Field(default_factory=list)
     exclude_terms: list[str] = Field(default_factory=list)
     require_market_signal: bool = False
@@ -49,15 +49,92 @@ class DiscoveryConfig(BaseModel):
         return cleaned
 
 
+class ScoreWeights(BaseModel):
+    """Relative importance for the five opportunity-score dimensions.
+
+    Values are deliberately expressed as easy-to-edit points rather than a
+    brittle required total of 100. They are normalized before scoring, so a
+    campaign owner can increase one priority without having to rebalance every
+    other field manually.
+    """
+
+    relevance: float = Field(default=25, ge=0, le=100)
+    purchase_intent: float = Field(default=30, ge=0, le=100)
+    product_fit: float = Field(default=25, ge=0, le=100)
+    urgency: float = Field(default=10, ge=0, le=100)
+    reachability: float = Field(default=10, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def must_have_at_least_one_weight(self) -> "ScoreWeights":
+        if sum(self.model_dump().values()) <= 0:
+            raise ValueError("At least one opportunity score weight must be greater than zero")
+        return self
+
+    def normalized(self) -> dict[str, float]:
+        values = self.model_dump()
+        total = sum(values.values())
+        return {name: value / total for name, value in values.items()}
+
+
+class ScoreDimensionSignals(BaseModel):
+    """Campaign-specific sub-signals the AI should use under each score."""
+
+    relevance: list[str] = Field(default_factory=lambda: [
+        "Matches a problem the product solves",
+        "Matches the campaign's use case or target customer",
+    ])
+    purchase_intent: list[str] = Field(default_factory=lambda: [
+        "Explicitly asks for recommendations, options, or alternatives",
+        "Comparing, replacing, or evaluating a solution",
+        "Mentions a budget, trial, buying process, or decision timeline",
+    ])
+    product_fit: list[str] = Field(default_factory=lambda: [
+        "Product capabilities address the stated need",
+        "The campaign limitations do not rule out this use case",
+    ])
+    urgency: list[str] = Field(default_factory=lambda: [
+        "Has a stated deadline, renewal, launch, or time-sensitive problem",
+        "Current workflow is blocking an important outcome",
+    ])
+    reachability: list[str] = Field(default_factory=lambda: [
+        "A public reply could usefully answer the question",
+        "The author is open to discussion and the thread is still timely",
+    ])
+    promotion_risk: list[str] = Field(default_factory=lambda: [
+        "Community rules or thread context make a brand reply inappropriate",
+        "The post is promotional, solved, hostile to promotion, or unrelated",
+    ])
+    market_fit: list[str] = Field(default_factory=lambda: [
+        "Supported geography, language, and customer profile are evidenced",
+        "No campaign market exclusion applies",
+    ])
+
+    @field_validator("*")
+    @classmethod
+    def clean_signals(cls, value: list[str]) -> list[str]:
+        return [str(item).strip() for item in value if str(item).strip()]
+
+
+class ScoreModelConfig(BaseModel):
+    """Scoring controls saved with each isolated campaign."""
+
+    weights: ScoreWeights = Field(default_factory=ScoreWeights)
+    promotion_risk_penalty: float = Field(default=15, ge=0, le=100)
+    market_mismatch_penalty: float = Field(default=10, ge=0, le=100)
+    dimension_signals: ScoreDimensionSignals = Field(default_factory=ScoreDimensionSignals)
+
+
 class QualificationConfig(BaseModel):
     minimum_lead_score: float = Field(default=0.72, ge=0, le=1)
     positive_signals: list[str] = Field(default_factory=list)
     negative_signals: list[str] = Field(default_factory=list)
     max_post_age_days: int = Field(default=7, ge=1, le=365)
+    scoring_mode: str = Field(default="ai_adaptive", pattern="^(ai_adaptive|manual)$")
+    score_model: ScoreModelConfig = Field(default_factory=ScoreModelConfig)
 
 
 class EngagementConfig(BaseModel):
-    allow_brand_mentions: bool = True
+    allow_brand_mentions: bool = False
     allow_links: bool = False
     tone: str = "helpful, concise, transparent, and non-salesy"
     disclosure: str = ""
@@ -142,7 +219,9 @@ def get_campaign_records() -> list[CampaignRecord]:
     return records
 
 
-def create_campaign_workspace(name: str) -> CampaignRecord:
+def create_campaign_workspace(
+    name: str, campaign: Campaign | dict | None = None
+) -> CampaignRecord:
     """Create an isolated, editable campaign file and add it to the workspace."""
     clean_name = name.strip()
     if not clean_name:
@@ -157,14 +236,22 @@ def create_campaign_workspace(name: str) -> CampaignRecord:
     ):
         candidate = root / f"{base_key}-{suffix}.yaml"
         suffix += 1
-    campaign = Campaign(
-        name=clean_name,
-        product=ProductConfig(
-            name="New product",
-            description="Describe the product, customer problem, and differentiation.",
-        ),
-        discovery=DiscoveryConfig(keywords=["product recommendation"]),
-    )
+    if campaign is None:
+        campaign = Campaign(
+            name=clean_name,
+            product=ProductConfig(name="", description=""),
+            market=MarketConfig(languages=[]),
+            discovery=DiscoveryConfig(keywords=["product recommendation"]),
+            engagement=EngagementConfig(
+                allow_brand_mentions=False,
+                allow_links=False,
+                tone="",
+                disclosure="",
+            ),
+        )
+    else:
+        campaign = campaign if isinstance(campaign, Campaign) else Campaign.model_validate(campaign)
+        campaign = campaign.model_copy(update={"name": clean_name})
     save_campaign(campaign, path=candidate, allowed_root=root)
     paths = _workspace_campaign_paths()
     paths.append(candidate)
@@ -185,7 +272,10 @@ def get_campaign_record(key: str | None = None) -> CampaignRecord:
 
 
 def load_campaign(path: str | Path | None = None) -> Campaign:
-    selected = Path(path or get_settings().campaign_path)
+    configured_path = str(path or get_settings().campaign_path).strip()
+    if not configured_path:
+        raise FileNotFoundError("No product setup is configured yet.")
+    selected = Path(configured_path)
     if not selected.exists():
         raise FileNotFoundError(
             f"Campaign file not found: {selected}. Copy a template from campaigns/."
@@ -197,7 +287,13 @@ def load_campaign(path: str | Path | None = None) -> Campaign:
 
 @lru_cache
 def get_campaign() -> Campaign:
-    return load_campaign()
+    configured = get_settings().campaign_path.strip()
+    if configured:
+        return load_campaign(configured)
+    # Internal helpers and direct library users retain a stable example campaign.
+    # It is intentionally not registered as a workspace, so a fresh web UI still
+    # opens on the empty V0.5 onboarding screen.
+    return load_campaign("campaigns/campaign.yaml")
 
 
 def clear_campaign_cache() -> None:
@@ -211,7 +307,10 @@ def save_campaign(
 ) -> Campaign:
     """Validate and atomically save the active campaign YAML."""
     validated = campaign if isinstance(campaign, Campaign) else Campaign.model_validate(campaign)
-    selected = Path(path or get_settings().campaign_path).resolve()
+    configured_path = str(path or get_settings().campaign_path).strip()
+    if not configured_path:
+        raise ValueError("Choose or create a product workspace before saving.")
+    selected = Path(configured_path).resolve()
     root = Path(allowed_root or "campaigns").resolve()
     if selected.suffix.lower() not in {".yaml", ".yml"}:
         raise ValueError("Campaign configuration must be a .yaml or .yml file")
