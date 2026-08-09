@@ -11,4 +11,5 @@ labels: enhancement
 
 ## Alternatives considered
 
-Please do not request automated posting, fake accounts, karma farming, vote manipulation, or undisclosed promotion.
+Please do not request automated posting, fake accounts, karma farming, vote
+manipulation, or undisclosed promotion.
