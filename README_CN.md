@@ -4,6 +4,16 @@ Reddit Lead Finder 是一个开源、自部署、人工审核的 Reddit 获客�
 它根据每个产品的 Product Setup 发现帖子、过滤市场、评估购买意图、选择回复策略、
 生成草稿并发送 Slack 或邮件提醒，但不会自动发布评论。
 
+V0.6.0 将扫描方式从“定时一次跑完全部搜索”改成了持久化分批队列。扫描器每 10 分钟
+唤醒一次，每轮只处理当前最需要更新的 3 到 8 个 RSS 地址，并在不同产品之间轮换。
+未命中缓存的请求会随机间隔 8 到 15 秒。高意图搜索每 30 到 60 分钟更新，普通搜索
+每 2 到 3 小时更新，相邻社区和研究型搜索每 6 到 12 小时更新。
+
+每个 RSS 地址的上次尝试、成功时间、下次执行时间和错误状态都会保存到 SQLite。
+收到第一个 429 后会立即停止本轮剩余 Reddit 请求，并严格遵守 `Retry-After`。如果
+Reddit 没有返回该信息，则全局冷却时间按 2、4、8、12 小时升级。重启软件不会清空
+这些状态，冷却期间仍然可以查看、审核、编辑和导出已有结果。
+
 V0.5.0 增加了网址生成完整配置的流程。第一次打开时不再预载 AI Meeting Notes、
 English 或任何示例。输入产品公开网址后，AI 会生成 Product、Market、Discovery、
 Qualification、Engagement、Review & Test 六个部分，用户只需逐项审核和修改。
@@ -21,7 +31,7 @@ cp .env.example .env
 
 ```text
 OPENAI_API_KEY=你的_API_Key
-REDDIT_USER_AGENT="reddit-lead-finder/0.5 (contact: 你的邮箱)"
+REDDIT_USER_AGENT="reddit-lead-finder/0.6 (contact: 你的邮箱)"
 ```
 
 然后运行：

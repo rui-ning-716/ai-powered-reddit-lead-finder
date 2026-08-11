@@ -8,3 +8,4 @@ support, accessibility, tests, and documentation are welcome.
 3. Do not include real Reddit exports, credentials, or private customer data.
 4. Keep all posting and private outreach human-approved.
 5. Open a pull request explaining the user problem and verification performed.
+

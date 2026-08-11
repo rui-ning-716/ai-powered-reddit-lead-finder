@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0
+
+- Replaced burst-style full scans with a persistent per-feed schedule that wakes every 10 minutes.
+- Limited each scheduler tick to 3 to 8 of the most-due RSS feeds and distributed work across campaigns in round-robin order.
+- Added 8 to 15 seconds of randomized spacing between uncached Reddit RSS requests.
+- Added separate automatic cadences for high-intent searches, standard searches, and adjacent or research communities.
+- Persisted every feed's last attempt, last success, next due time, and error status in SQLite so restarts do not reset pacing.
+- Changed HTTP 429 handling to stop the current scan immediately instead of retrying the same or remaining URLs.
+- Added strict `Retry-After` support and persistent 2, 4, 8, and 12 hour cooldown escalation when Reddit omits the header.
+- Kept the dashboard, existing opportunity review, editing, reporting, and notifications available while Reddit fetching is paused.
+
 ## 0.5.0
 
 - Added a clean first-run screen with no preloaded demo product or language.

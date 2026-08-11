@@ -173,7 +173,7 @@ def _read_page(url: str) -> dict[str, object]:
     request = Request(
         url,
         headers={
-            "User-Agent": "Reddit-Lead-Finder/0.5 website setup assistant",
+            "User-Agent": "Reddit-Lead-Finder/0.6 website setup assistant",
             "Accept": "text/html,text/plain;q=0.9",
         },
     )

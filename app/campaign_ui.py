@@ -84,3 +84,4 @@ $('back').onclick=()=>show(current-1);$('next').onclick=async()=>{if(current===0
 async function init(){await loadWorkspace();if(activeKey){const d=await api('/api/campaign?key='+encodeURIComponent(activeKey));fill(d.campaign);$('campaign-file').textContent=`Saved product workspace${d.openai_configured?'':' · Add OPENAI_API_KEY to use AI'}`;generated=true;show(0)}else{blank();show(0);const initial=params.get('website');if(initial)await generateAll()}}
 init().catch(e=>toast(e.message,true));
 </script></body></html>'''
+

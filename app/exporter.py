@@ -103,3 +103,4 @@ def _csv_safe(value):
     if not isinstance(value, str):
         return value
     return f"'{value}" if value.startswith(("=", "+", "-", "@")) else value
+

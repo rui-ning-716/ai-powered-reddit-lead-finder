@@ -5,3 +5,4 @@ pydantic-settings==2.7.1
 PyYAML==6.0.2
 python-dotenv==1.0.1
 uvicorn[standard]==0.34.0
+

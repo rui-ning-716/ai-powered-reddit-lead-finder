@@ -61,3 +61,4 @@ def should_notify(lead: dict, campaign: Campaign | None = None) -> bool:
 
 def _passes_slack_threshold(lead: dict) -> bool:
     return float(lead.get("intent_score") or 0) >= get_settings().slack_min_intent_score
+

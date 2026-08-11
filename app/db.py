@@ -477,3 +477,4 @@ def lead_stats(campaign_key: str | None = None) -> dict:
             "conversion_value": sum(float(row["value"] or 0) for row in outcomes),
             "qualified_rate": (qualified / replied) if replied else 0,
         }
+

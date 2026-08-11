@@ -77,3 +77,4 @@ def _body(lead: dict) -> str:
             lead.get("permalink") or "",
         ]
     )
+

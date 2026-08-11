@@ -27,12 +27,13 @@ from app.dashboard import render_dashboard, render_first_run
 from app.db import init_db, lead_stats, list_leads, mark_draft_status, move_draft_to_campaign
 from app.report import render_report, report_csv
 from app.scanner import run_scan, run_when_scan_idle
+from app.reddit_scan_state import ensure_scan_state_schema
 from app.website import WebsiteReadError, normalize_website_url, research_product_website
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Reddit Lead Finder", version="0.5.0")
+app = FastAPI(title="Reddit Lead Finder", version="0.6.0")
 scheduler = BackgroundScheduler()
 
 
@@ -109,16 +110,20 @@ def startup() -> None:
             "Set both DASHBOARD_USERNAME and DASHBOARD_PASSWORD, or leave both blank."
         )
     init_db()
+    ensure_scan_state_schema()
     scheduler.add_job(
         run_scan,
         "interval",
-        minutes=settings.search_interval_minutes,
+        minutes=settings.reddit_scan_tick_minutes,
         id="reddit_scan",
         max_instances=1,
         replace_existing=True,
     )
     scheduler.start()
-    logger.info("scheduler started interval=%s minutes", settings.search_interval_minutes)
+    logger.info(
+        "scheduler started tick=%s minutes with persistent RSS pacing",
+        settings.reddit_scan_tick_minutes,
+    )
 
 
 @app.on_event("shutdown")

@@ -5,7 +5,7 @@ from app.campaign import Campaign, CampaignRecord, get_campaign
 
 
 def render_first_run() -> str:
-    """Render the clean V0.5 onboarding state before a product is configured."""
+    """Render the clean onboarding state before a product is configured."""
     return """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Get started · Reddit Lead Finder</title>

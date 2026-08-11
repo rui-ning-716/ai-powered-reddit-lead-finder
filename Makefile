@@ -18,3 +18,4 @@ test:
 
 check:
 	python3 -m compileall app scripts tests
+

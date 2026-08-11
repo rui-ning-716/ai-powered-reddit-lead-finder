@@ -25,3 +25,4 @@ Use `subreddits` for core communities that should be actively monitored.
 `adjacent_subreddits` and `watch_only_subreddits` document the wider opportunity
 map but are not scanned automatically. Put community-specific disclosure,
 promotion, or moderation guidance in `community_notes`.
+
