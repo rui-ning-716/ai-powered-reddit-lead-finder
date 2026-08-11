@@ -8,6 +8,23 @@ market and customer fit, scores buying intent, recommends how to engage,
 drafts a useful reply, and sends qualified opportunities to Slack or email.
 It never auto-posts.
 
+## New in V0.6
+
+Reddit discovery now runs as a persistent, paced queue instead of fetching every
+configured search in one burst. The scheduler wakes every 10 minutes and selects
+only 3 to 8 of the most-due RSS feeds, alternating across product workspaces.
+Uncached requests are spaced by a random 8 to 15 seconds.
+
+High-intent searches refresh every 30 to 60 minutes, standard searches every 2
+to 3 hours, and adjacent or research communities every 6 to 12 hours. Feed due
+times, attempts, successes, errors, and Reddit cooldown state are stored in
+SQLite, so restarting the application does not erase its pacing history.
+
+The first HTTP 429 now stops all remaining Reddit requests in that scan. The app
+strictly follows `Retry-After`; if the header is absent, the global cooldown
+escalates through 2, 4, 8, and 12 hours. Existing results remain available for
+review, editing, reporting, and notification while discovery is paused.
+
 ## New in V0.5
 
 Fresh installations now open on a clean website-first onboarding screen. Enter a
@@ -71,7 +88,7 @@ data.
 - Client-ready HTML report and live CSV export
 - Optional password protection for externally reachable dashboards
 - Cross-post deduplication
-- Reddit RSS caching, exponential backoff, manual cooldown, and circuit breaker
+- Persistent Reddit RSS scheduling, randomized request spacing, global 429 cooldown, and 5xx backoff
 - Docker and Docker Compose support
 
 ## Quick start
@@ -86,7 +103,7 @@ Add your OpenAI API key and a descriptive Reddit User-Agent to `.env`:
 
 ```text
 OPENAI_API_KEY=your_key_here
-REDDIT_USER_AGENT="reddit-lead-finder/0.5 (contact: you@example.com)"
+REDDIT_USER_AGENT="reddit-lead-finder/0.6 (contact: you@example.com)"
 ```
 
 Start with Docker:
@@ -118,7 +135,8 @@ cp .env.example .env
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-The scheduler scans every 30 minutes by default. To trigger a manual scan:
+The scheduler wakes every 10 minutes by default and processes only the most-due
+3 to 8 RSS feeds. To trigger a manually paced scan:
 
 ```bash
 curl -X POST http://localhost:8000/scan-now
@@ -344,10 +362,17 @@ Notification failures do not stop scanning.
 
 ## Reddit rate limits
 
-Reddit RSS may return HTTP 429. Reddit Lead Finder caches feeds, retries with
-exponential backoff, respects `Retry-After`, and opens a circuit breaker after
-repeated rate limits. The default cooldown is 120 minutes. Manual scans have a
-separate 15-minute cooldown.
+Reddit RSS may return HTTP 429. Reddit Lead Finder distributes feeds across
+10-minute scheduler ticks, spaces uncached requests by 8 to 15 seconds, and saves
+per-feed pacing in SQLite. High-intent searches run more often than standard and
+research feeds without creating one large request burst.
+
+The first 429 immediately stops the remaining Reddit requests in that scan. The
+app follows `Retry-After` exactly. Without that header, it pauses globally for 2
+hours, then escalates repeated 429s to 4, 8, and 12 hours. This state survives an
+application restart. Temporary network and 5xx failures still use bounded
+exponential backoff. Manual scans have a separate 15-minute cooldown and cannot
+bypass an active Reddit cooldown.
 
 RSS is convenient but less reliable than registered API access. Keep request
 volume conservative and review current Reddit developer requirements before

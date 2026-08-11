@@ -9,3 +9,4 @@ services:
       - ./campaigns:/app/campaigns
       - ./data:/app/data
     restart: unless-stopped
+

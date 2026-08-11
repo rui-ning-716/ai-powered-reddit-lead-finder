@@ -114,3 +114,4 @@ def _status_label(value: str) -> str:
         "replied": "Published",
         "skipped": "Skipped",
     }.get(value, value.replace("_", " ").title())
+

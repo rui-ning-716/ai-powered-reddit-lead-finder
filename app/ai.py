@@ -676,3 +676,4 @@ def _has_explicit_urgency(post: dict) -> bool:
 
 def _normalize(value: str) -> str:
     return re.sub(r"\s+", " ", value.lower()).strip()
+

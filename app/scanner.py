@@ -23,7 +23,16 @@ from app.db import has_seen_post, recent_generated_comments, save_draft, save_po
 from app.dedupe import find_duplicate_post
 from app.exporter import export_lead
 from app.notifications.service import notify_new_lead
-from app.reddit_client import get_fetch_stats, search_posts
+from app.reddit_client import (
+    begin_reddit_scan,
+    build_feed_descriptors,
+    get_fetch_stats,
+    is_circuit_open,
+    request_budget_for_tick,
+    search_posts,
+    should_stop_reddit_requests,
+)
+from app.reddit_scan_state import FeedTask, select_feed_tasks, sync_campaign_feeds
 
 logger = logging.getLogger(__name__)
 
@@ -71,15 +80,57 @@ def run_scan(manual: bool = False, campaign_key: str | None = None) -> dict:
             if campaign_key
             else get_campaign_records()
         )
-        results = [
-            _run_scan_unlocked(record.campaign, record.key) for record in records
-        ]
+        if not records:
+            return {"status": "idle", "message": "No product workspaces are configured."}
+
+        begin_reddit_scan(records[0].campaign)
+        for record in records:
+            sync_campaign_feeds(record.key, build_feed_descriptors(record.campaign))
+
+        if is_circuit_open():
+            return {
+                "status": "reddit_rate_limit_cooldown",
+                "campaign_count": len(records),
+                **get_fetch_stats(),
+            }
+
+        tasks = select_feed_tasks(
+            [record.key for record in records],
+            request_budget_for_tick(settings),
+            force=manual,
+        )
+        if not tasks:
+            return {
+                "status": "idle",
+                "message": "No Reddit feeds are due in this scan cycle.",
+                "campaign_count": len(records),
+                **get_fetch_stats(),
+            }
+
+        tasks_by_campaign: dict[str, list[FeedTask]] = {}
+        for task in tasks:
+            tasks_by_campaign.setdefault(task.campaign_key, []).append(task)
+
+        results = []
+        for record in records:
+            campaign_tasks = tasks_by_campaign.get(record.key, [])
+            if not campaign_tasks:
+                continue
+            results.append(
+                _run_scan_unlocked(
+                    record.campaign,
+                    record.key,
+                    feed_tasks=campaign_tasks,
+                    manage_reddit_scan=False,
+                )
+            )
+            if should_stop_reddit_requests():
+                break
         if len(results) == 1:
             return results[0]
         numeric_fields = [
             "scanned", "new_posts", "analyzed", "drafted", "duplicates",
-            "qualification_skips", "errors", "rss_requests",
-            "cached_rss_requests", "rate_limited_requests", "rss_errors",
+            "qualification_skips", "errors",
         ]
         combined = {
             field: sum(int(result.get(field, 0)) for result in results)
@@ -90,6 +141,7 @@ def run_scan(manual: bool = False, campaign_key: str | None = None) -> dict:
                 "status": "completed",
                 "campaigns": results,
                 "campaign_count": len(results),
+                **get_fetch_stats(),
             }
         )
         if any(result.get("status") == "reddit_rate_limit_cooldown" for result in results):
@@ -100,7 +152,10 @@ def run_scan(manual: bool = False, campaign_key: str | None = None) -> dict:
 
 
 def _run_scan_unlocked(
-    campaign: Campaign | None = None, campaign_key: str | None = None
+    campaign: Campaign | None = None,
+    campaign_key: str | None = None,
+    feed_tasks: list[FeedTask] | None = None,
+    manage_reddit_scan: bool = True,
 ) -> dict:
     settings = get_settings()
     campaign = campaign or get_campaign()
@@ -116,7 +171,12 @@ def _run_scan_unlocked(
     qualification_skips = 0
     seen_scan_posts: list[dict] = []
 
-    for post in search_posts(campaign=campaign):
+    for post in search_posts(
+        campaign=campaign,
+        campaign_key=campaign_key,
+        feed_tasks=feed_tasks,
+        manage_scan=manage_reddit_scan,
+    ):
         scanned += 1
         if has_seen_post(post["reddit_id"], campaign_key=campaign_key):
             continue
@@ -219,8 +279,7 @@ def _run_scan_unlocked(
     status = "completed"
     if (
         fetch_stats.get("circuit_state") == "open"
-        and fetch_stats.get("rss_requests") == 0
-        and scanned == 0
+        or fetch_stats.get("rate_limited_requests", 0) > 0
     ):
         status = "reddit_rate_limit_cooldown"
 

@@ -292,7 +292,7 @@ def get_campaign() -> Campaign:
         return load_campaign(configured)
     # Internal helpers and direct library users retain a stable example campaign.
     # It is intentionally not registered as a workspace, so a fresh web UI still
-    # opens on the empty V0.5 onboarding screen.
+    # opens on the empty website-first onboarding screen introduced in V0.5.
     return load_campaign("campaigns/campaign.yaml")
 
 

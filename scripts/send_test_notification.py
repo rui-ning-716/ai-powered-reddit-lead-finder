@@ -24,3 +24,4 @@ if __name__ == "__main__":
     slack_sent = send_slack_notification(TEST_LEAD)
     email_sent = send_email_notification(TEST_LEAD)
     print({"slack_sent": slack_sent, "email_sent": email_sent})
+
