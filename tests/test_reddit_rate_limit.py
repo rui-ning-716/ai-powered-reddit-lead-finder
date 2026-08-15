@@ -174,18 +174,17 @@ class RedditRateLimitTest(unittest.TestCase):
         self.assertEqual(second.strike_count, 2)
         self.assertEqual(round((second.cooldown_until - (1000 + 2 * 60 * 60 + 2)) / 3600), 4)
 
-    def test_scheduled_scan_during_cooldown_makes_zero_reddit_requests(self):
+    def test_legacy_rss_scan_during_cooldown_makes_zero_reddit_requests(self):
         reddit_client.open_circuit()
         with patch("urllib.request.urlopen") as urlopen:
-            result = scanner._run_scan_unlocked(
+            posts = list(reddit_client.search_posts(
                 campaign=self.campaign,
-                campaign_key="one",
                 feed_tasks=[task(1)],
-                manage_reddit_scan=False,
-            )
+                manage_scan=False,
+            ))
 
-        self.assertEqual(result["status"], "reddit_rate_limit_cooldown")
-        self.assertEqual(result["rss_requests"], 0)
+        self.assertEqual(posts, [])
+        self.assertEqual(reddit_client.get_fetch_stats()["rss_requests"], 0)
         urlopen.assert_not_called()
 
     def test_feed_schedule_round_robins_campaigns(self):

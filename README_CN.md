@@ -4,6 +4,19 @@ Reddit Lead Finder 是一个开源、自部署、人工审核的 Reddit 获客�
 它根据每个产品的 Product Setup 发现帖子、过滤市场、评估购买意图、选择回复策略、
 生成草稿并发送 Slack 或邮件提醒，但不会自动发布评论。
 
+V0.7.5 使用 `Perplexity 主搜索 + Apify 按需兜底 + OpenAI 分析`，并扩大了对选型、比较、迁移、替换、询价和竞品痛点帖子的召回。默认每小时自动扫描一次，每轮最多深度分析 150 篇新帖子。
+日常扫描不再直接请求 Reddit RSS。Perplexity 会限制搜索域名为 `reddit.com`，按照 Campaign
+的时间范围搜索，并将最多 5 个查询合并到一次请求。返回结果统一转换、过滤和去重后，
+才会进入 OpenAI 购买意图分析。
+
+Apify 默认只在 Perplexity 失败或有效帖子少于设定数量时启动。每次兜底有严格的帖子数量
+上限，不抓评论，也不开启 Apify 自带的 AI 分析，从而控制费用。如果 Apify 失败，已经取得的
+Perplexity 结果仍然会继续处理，不会让整次扫描归零。
+
+创建 Campaign 时，如果产品网站阻止直接读取，系统也会自动用 Perplexity 搜索该网站的公开
+页面作为备选。即使两种读取方式都失败，也会根据网址和用户填写的产品说明生成一份保守配置，
+并标记需要确认的内容，不再直接卡死在网站读取错误。
+
 V0.6.0 将扫描方式从“定时一次跑完全部搜索”改成了持久化分批队列。扫描器每 10 分钟
 唤醒一次，每轮只处理当前最需要更新的 3 到 8 个 RSS 地址，并在不同产品之间轮换。
 未命中缓存的请求会随机间隔 8 到 15 秒。高意图搜索每 30 到 60 分钟更新，普通搜索
@@ -27,11 +40,12 @@ AI 生成的 subreddit 只是候选社区，不代表已经确认允许品牌推
 cp .env.example .env
 ```
 
-在 `.env` 中填写 OpenAI API key，并将 User-Agent 中的邮箱改为自己的：
+在 `.env` 中填写 OpenAI 和 Perplexity API key。Apify 是可选兜底：
 
 ```text
 OPENAI_API_KEY=你的_API_Key
-REDDIT_USER_AGENT="reddit-lead-finder/0.6 (contact: 你的邮箱)"
+PERPLEXITY_API_KEY=你的_Perplexity_API_Key
+APIFY_API_TOKEN=可选的_Apify_Token
 ```
 
 然后运行：
@@ -57,9 +71,9 @@ docker compose up --build
 最后可以选择保存 Product Setup，或者保存后马上搜索 Reply Opportunities。页面保存的内容会写入该
 产品自己的 YAML 文件，方便后续复制、版本管理和分享。
 
-Reddit RSS 搜索是关键词匹配，不是语义搜索。搜索词不需要与整条标题完全一致，但 Reddit
-会先根据词语和短语召回候选帖子，双引号会让多词短语更精确。AI 只会在帖子被召回后再判断
-语义和购买意图，因此同一个需求最好准备多种用户可能使用的表达方式。
+Perplexity 会根据关键词搜索公开 Reddit 页面，并使用 Campaign 的时间范围限制结果。
+AI 只会在帖子被召回后再判断语义和购买意图，因此同一个需求最好准备多种用户可能使用的
+表达方式。只有主搜索结果不足时才会调用 Apify。
 
 ## 同时管理多个客户
 

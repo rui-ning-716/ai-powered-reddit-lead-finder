@@ -25,15 +25,15 @@ from app.campaign import (
 from app.campaign_ui import render_campaign_wizard
 from app.dashboard import render_dashboard, render_first_run
 from app.db import init_db, lead_stats, list_leads, mark_draft_status, move_draft_to_campaign
+from app.discovery import DiscoveryError, research_website_with_perplexity
 from app.report import render_report, report_csv
 from app.scanner import run_scan, run_when_scan_idle
-from app.reddit_scan_state import ensure_scan_state_schema
 from app.website import WebsiteReadError, normalize_website_url, research_product_website
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Reddit Lead Finder", version="0.6.0")
+app = FastAPI(title="Reddit Lead Finder", version="0.7.5")
 scheduler = BackgroundScheduler()
 
 
@@ -110,19 +110,18 @@ def startup() -> None:
             "Set both DASHBOARD_USERNAME and DASHBOARD_PASSWORD, or leave both blank."
         )
     init_db()
-    ensure_scan_state_schema()
     scheduler.add_job(
         run_scan,
         "interval",
-        minutes=settings.reddit_scan_tick_minutes,
-        id="reddit_scan",
+        minutes=settings.discovery_scan_interval_minutes,
+        id="provider_discovery_scan",
         max_instances=1,
         replace_existing=True,
     )
     scheduler.start()
     logger.info(
-        "scheduler started tick=%s minutes with persistent RSS pacing",
-        settings.reddit_scan_tick_minutes,
+        "scheduler started provider discovery interval=%s minutes",
+        settings.discovery_scan_interval_minutes,
     )
 
 
@@ -133,7 +132,14 @@ def shutdown() -> None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True}
+    settings = get_settings()
+    return {
+        "ok": True,
+        "discovery": {
+            "perplexity_configured": bool(settings.perplexity_api_key),
+            "apify_fallback_configured": bool(settings.apify_api_token),
+        },
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -166,6 +172,8 @@ def campaign_config(key: str | None = None) -> dict:
         "campaign_key": record.key,
         "campaign_path": str(record.path),
         "openai_configured": bool(settings.openai_api_key),
+        "perplexity_configured": bool(settings.perplexity_api_key),
+        "apify_configured": bool(settings.apify_api_token),
     }
 
 
@@ -201,24 +209,29 @@ def generate_product_setup(request: ProductSetupGenerateRequest) -> dict:
     try:
         research = research_product_website(request.website_url)
     except WebsiteReadError as exc:
-        if not request.product_notes.strip():
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"{exc} Add a short product description under optional product notes "
-                    "and try again."
-                ),
-            ) from exc
+        if "Local and private network addresses are not allowed" in str(exc):
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             normalized_url = normalize_website_url(request.website_url)
         except WebsiteReadError as url_exc:
             raise HTTPException(status_code=400, detail=str(url_exc)) from url_exc
+        try:
+            search_research = research_website_with_perplexity(normalized_url)
+        except DiscoveryError as search_exc:
+            warning = f"Direct website read failed: {exc} Search fallback failed: {search_exc}"
+            research_text = (
+                "The public website could not be read. Use the URL, hostname, and any "
+                "operator notes below. Keep assumptions conservative and mark uncertain "
+                "details for review."
+            )
+            pages_read = 0
+        else:
+            warning = f"Direct website read failed: {exc} Used Perplexity website search instead."
+            research_text = search_research["prompt_text"]
+            pages_read = int(search_research["pages_read"])
         generated = generate_campaign_setup_from_website(
             website_url=normalized_url,
-            website_research=(
-                "The public website could not be read. Use only the operator notes "
-                "below and mark uncertain assumptions for review."
-            ),
+            website_research=research_text,
             product_notes=request.product_notes,
         )
         return {
@@ -226,8 +239,8 @@ def generate_product_setup(request: ProductSetupGenerateRequest) -> dict:
             "source": {
                 "requested_url": normalized_url,
                 "final_url": normalized_url,
-                "pages_read": 0,
-                "warning": str(exc),
+                "pages_read": pages_read,
+                "warning": warning,
             },
         }
     generated = generate_campaign_setup_from_website(

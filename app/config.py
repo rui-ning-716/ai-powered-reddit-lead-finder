@@ -11,6 +11,47 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MODEL")
 
+    # V0.7 discovery stack. Perplexity is the primary, low-cost search layer;
+    # Apify is invoked only when the primary result set is too small or fails.
+    perplexity_api_key: str = Field(default="", alias="PERPLEXITY_API_KEY")
+    perplexity_search_url: str = Field(
+        default="https://api.perplexity.ai/search", alias="PERPLEXITY_SEARCH_URL"
+    )
+    perplexity_query_batch_size: int = Field(
+        default=5, ge=1, le=5, alias="PERPLEXITY_QUERY_BATCH_SIZE"
+    )
+    perplexity_max_results_per_query: int = Field(
+        default=20, ge=1, le=20, alias="PERPLEXITY_MAX_RESULTS_PER_QUERY"
+    )
+    perplexity_timeout_seconds: int = Field(
+        default=30, ge=5, le=120, alias="PERPLEXITY_TIMEOUT_SECONDS"
+    )
+    perplexity_max_retries: int = Field(
+        default=2, ge=0, le=5, alias="PERPLEXITY_MAX_RETRIES"
+    )
+
+    apify_api_token: str = Field(default="", alias="APIFY_API_TOKEN")
+    apify_reddit_actor_id: str = Field(
+        default="harshmaur~reddit-scraper", alias="APIFY_REDDIT_ACTOR_ID"
+    )
+    apify_fallback_enabled: bool = Field(default=True, alias="APIFY_FALLBACK_ENABLED")
+    apify_fallback_min_results: int = Field(
+        default=5, ge=0, le=100, alias="APIFY_FALLBACK_MIN_RESULTS"
+    )
+    apify_max_results_per_scan: int = Field(
+        default=20, ge=1, le=500, alias="APIFY_MAX_RESULTS_PER_SCAN"
+    )
+    apify_timeout_seconds: int = Field(
+        default=120, ge=10, le=300, alias="APIFY_TIMEOUT_SECONDS"
+    )
+
+    discovery_scan_interval_minutes: int = Field(
+        default=60, ge=5, alias="DISCOVERY_SCAN_INTERVAL_MINUTES"
+    )
+    discovery_max_queries_per_scan: int = Field(
+        default=40, ge=1, le=40, alias="DISCOVERY_MAX_QUERIES_PER_SCAN"
+    )
+
     reddit_user_agent: str = Field(
         default="reddit-lead-finder/0.6 (human-in-the-loop reply discovery)",
         alias="REDDIT_USER_AGENT",
@@ -53,9 +94,11 @@ class Settings(BaseSettings):
         default=720, alias="REDDIT_RESEARCH_INTERVAL_MAX_MINUTES"
     )
     min_manual_scan_interval_minutes: int = Field(
-        default=15, alias="MIN_MANUAL_SCAN_INTERVAL_MINUTES"
+        default=2, alias="MIN_MANUAL_SCAN_INTERVAL_MINUTES"
     )
-    max_ai_posts_per_scan: int = Field(default=8, alias="MAX_AI_POSTS_PER_SCAN")
+    max_ai_posts_per_scan: int = Field(
+        default=150, ge=1, le=1000, alias="MAX_AI_POSTS_PER_SCAN"
+    )
     reddit_rss_cache_ttl_minutes: int = Field(
         default=10, alias="REDDIT_RSS_CACHE_TTL_MINUTES"
     )

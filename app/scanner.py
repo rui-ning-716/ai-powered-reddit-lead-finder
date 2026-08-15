@@ -21,18 +21,16 @@ from app.campaign import (
 from app.config import get_settings
 from app.db import has_seen_post, recent_generated_comments, save_draft, save_post
 from app.dedupe import find_duplicate_post
+from app.discovery import (
+    DiscoveryConfigurationError,
+    DiscoveryError,
+    begin_discovery_scan,
+    get_discovery_stats as get_fetch_stats,
+    search_posts,
+)
 from app.exporter import export_lead
 from app.notifications.service import notify_new_lead
-from app.reddit_client import (
-    begin_reddit_scan,
-    build_feed_descriptors,
-    get_fetch_stats,
-    is_circuit_open,
-    request_budget_for_tick,
-    search_posts,
-    should_stop_reddit_requests,
-)
-from app.reddit_scan_state import FeedTask, select_feed_tasks, sync_campaign_feeds
+
 
 logger = logging.getLogger(__name__)
 
@@ -52,13 +50,22 @@ def run_when_scan_idle(operation: Callable[[], T]) -> tuple[bool, T | None]:
 
 
 def run_scan(manual: bool = False, campaign_key: str | None = None) -> dict:
+    """Run the provider-backed scan for one campaign or the whole workspace."""
     global _LAST_MANUAL_SCAN_AT
 
     settings = get_settings()
     if not _SCAN_LOCK.acquire(blocking=False):
-        return {"status": "already_running"}
+        return {"status": "already_running", "message": "A discovery scan is already running."}
 
     try:
+        records = (
+            [get_campaign_record(campaign_key)]
+            if campaign_key
+            else get_campaign_records()
+        )
+        if not records:
+            return {"status": "idle", "message": "No product workspaces are configured."}
+
         if manual:
             cooldown_seconds = settings.min_manual_scan_interval_minutes * 60
             now = time.monotonic()
@@ -71,97 +78,79 @@ def run_scan(manual: bool = False, campaign_key: str | None = None) -> dict:
                 return {
                     "status": "cooldown",
                     "message": "A manual scan ran recently. Please wait before scanning again.",
-                    "retry_after_seconds": wait_seconds,
+                    "retry_after_seconds": max(1, wait_seconds),
                 }
             _LAST_MANUAL_SCAN_AT = now
 
-        records = (
-            [get_campaign_record(campaign_key)]
-            if campaign_key
-            else get_campaign_records()
-        )
-        if not records:
-            return {"status": "idle", "message": "No product workspaces are configured."}
-
-        begin_reddit_scan(records[0].campaign)
-        for record in records:
-            sync_campaign_feeds(record.key, build_feed_descriptors(record.campaign))
-
-        if is_circuit_open():
-            return {
-                "status": "reddit_rate_limit_cooldown",
-                "campaign_count": len(records),
-                **get_fetch_stats(),
-            }
-
-        tasks = select_feed_tasks(
-            [record.key for record in records],
-            request_budget_for_tick(settings),
-            force=manual,
-        )
-        if not tasks:
-            return {
-                "status": "idle",
-                "message": "No Reddit feeds are due in this scan cycle.",
-                "campaign_count": len(records),
-                **get_fetch_stats(),
-            }
-
-        tasks_by_campaign: dict[str, list[FeedTask]] = {}
-        for task in tasks:
-            tasks_by_campaign.setdefault(task.campaign_key, []).append(task)
-
-        results = []
-        for record in records:
-            campaign_tasks = tasks_by_campaign.get(record.key, [])
-            if not campaign_tasks:
-                continue
-            results.append(
-                _run_scan_unlocked(
-                    record.campaign,
-                    record.key,
-                    feed_tasks=campaign_tasks,
-                    manage_reddit_scan=False,
-                )
-            )
-            if should_stop_reddit_requests():
-                break
+        results = [
+            _run_scan_unlocked(record.campaign, record.key)
+            for record in records
+        ]
         if len(results) == 1:
             return results[0]
-        numeric_fields = [
-            "scanned", "new_posts", "analyzed", "drafted", "duplicates",
-            "qualification_skips", "errors",
-        ]
-        combined = {
-            field: sum(int(result.get(field, 0)) for result in results)
-            for field in numeric_fields
-        }
-        combined.update(
-            {
-                "status": "completed",
-                "campaigns": results,
-                "campaign_count": len(results),
-                **get_fetch_stats(),
-            }
-        )
-        if any(result.get("status") == "reddit_rate_limit_cooldown" for result in results):
-            combined["status"] = "reddit_rate_limit_cooldown"
-        return combined
+        return _combine_campaign_results(results)
     finally:
         _SCAN_LOCK.release()
+
+
+def _combine_campaign_results(results: list[dict]) -> dict:
+    numeric_fields = [
+        "scanned",
+        "new_posts",
+        "analyzed",
+        "drafted",
+        "duplicates",
+        "qualification_skips",
+        "errors",
+        "perplexity_requests",
+        "perplexity_results",
+        "apify_requests",
+        "apify_results",
+    ]
+    combined = {
+        field: sum(int(result.get(field, 0)) for result in results)
+        for field in numeric_fields
+    }
+    statuses = {str(result.get("status")) for result in results}
+    if "configuration_error" in statuses:
+        status = "configuration_error"
+    elif "provider_error" in statuses:
+        status = "provider_error"
+    elif "completed_with_fallback" in statuses:
+        status = "completed_with_fallback"
+    else:
+        status = "completed"
+    combined.update(
+        {
+            "status": status,
+            "campaigns": results,
+            "campaign_count": len(results),
+        }
+    )
+    return combined
 
 
 def _run_scan_unlocked(
     campaign: Campaign | None = None,
     campaign_key: str | None = None,
-    feed_tasks: list[FeedTask] | None = None,
+    feed_tasks: list | None = None,
     manage_reddit_scan: bool = True,
 ) -> dict:
+    """Discover, qualify, and draft while keeping provider failures contained."""
+    del feed_tasks, manage_reddit_scan  # Compatibility with the V0.6 scanner API.
     settings = get_settings()
     campaign = campaign or get_campaign()
     campaign_key = campaign_key or campaign_key_for_path(
         getattr(settings, "campaign_path", "campaigns/campaign.yaml")
     )
+    begin_discovery_scan(campaign)
+    if hasattr(settings, "openai_api_key") and not settings.openai_api_key:
+        return _provider_failure_result(
+            "configuration_error",
+            "Add OPENAI_API_KEY to the server before scanning.",
+            campaign,
+            campaign_key,
+        )
     scanned = 0
     new_posts = 0
     analyzed = 0
@@ -171,12 +160,18 @@ def _run_scan_unlocked(
     qualification_skips = 0
     seen_scan_posts: list[dict] = []
 
-    for post in search_posts(
-        campaign=campaign,
-        campaign_key=campaign_key,
-        feed_tasks=feed_tasks,
-        manage_scan=manage_reddit_scan,
-    ):
+    try:
+        discovered_posts = search_posts(campaign=campaign, campaign_key=campaign_key)
+    except DiscoveryConfigurationError as exc:
+        return _provider_failure_result(
+            "configuration_error", str(exc), campaign, campaign_key
+        )
+    except DiscoveryError as exc:
+        return _provider_failure_result(
+            "provider_error", str(exc), campaign, campaign_key
+        )
+
+    for post in discovered_posts:
         scanned += 1
         if has_seen_post(post["reddit_id"], campaign_key=campaign_key):
             continue
@@ -198,8 +193,6 @@ def _run_scan_unlocked(
             logger.info("max AI posts per scan reached: %s", settings.max_ai_posts_per_scan)
             break
 
-        new_posts += 1
-        save_post(post, campaign_key=campaign_key)
         analyzed += 1
 
         try:
@@ -213,8 +206,36 @@ def _run_scan_unlocked(
             logger.exception("failed to analyze post %s: %s", post["reddit_id"], exc)
             continue
 
+        # Mark a post as seen only after AI qualification succeeds. A temporary
+        # OpenAI failure therefore remains retryable on the next scan.
+        save_post(post, campaign_key=campaign_key)
+        new_posts += 1
+
         if not qualification.get("is_qualified"):
             qualification_skips += 1
+            # Keep related candidates visible. A skipped record has no reply
+            # draft and never sends a notification, but its source and AI
+            # reasoning remain available for recall and campaign tuning.
+            save_draft(
+                reddit_id=post["reddit_id"],
+                intent_score=float(qualification.get("lead_score") or 0),
+                reason=(
+                    qualification.get("reason")
+                    or qualification.get("skip_reason")
+                    or "Not qualified."
+                ),
+                comment_text="",
+                response_type="skip",
+                should_reply=False,
+                should_mention_brand=False,
+                should_include_link=False,
+                strategy_reason=(
+                    qualification.get("skip_reason") or "No reply recommended."
+                ),
+                qualification=qualification,
+                campaign_key=campaign_key,
+                status="skipped",
+            )
             logger.info(
                 "skipping unqualified post reddit_id=%s reason=%s",
                 post["reddit_id"],
@@ -223,66 +244,69 @@ def _run_scan_unlocked(
             continue
 
         score = float(qualification["lead_score"])
-        threshold = campaign.qualification.minimum_lead_score
-
-        if (
-            qualification["market_fit"]
-            and score >= threshold
-        ):
-            strategy = decide_response_strategy(post, qualification, campaign=campaign)
-            try:
-                draft = generate_personalized_comment(
-                    post=post,
-                    qualification=qualification,
-                    strategy=strategy,
-                    recent_comments=recent_generated_comments(
-                        limit=20, campaign_key=campaign_key
-                    ),
-                    campaign=campaign,
-                )
-                comment_text = draft.get("comment_text", "")
-            except OpenAIError as exc:
-                errors += 1
-                logger.error("OpenAI draft generation failed for %s: %s", post["reddit_id"], exc)
-                comment_text = ""
-            except Exception as exc:
-                errors += 1
-                logger.exception("failed to generate draft for %s: %s", post["reddit_id"], exc)
-                comment_text = ""
-
-            draft_id = save_draft(
-                reddit_id=post["reddit_id"],
-                intent_score=score,
-                reason=qualification["reason"],
-                comment_text=comment_text,
-                response_type=strategy["response_type"],
-                should_reply=strategy["should_reply"],
-                should_mention_brand=strategy["should_mention_brand"],
-                should_include_link=strategy["should_include_link"],
-                strategy_reason=strategy["reason"],
+        strategy = decide_response_strategy(post, qualification, campaign=campaign)
+        try:
+            draft = generate_personalized_comment(
+                post=post,
                 qualification=qualification,
-                campaign_key=campaign_key,
+                strategy=strategy,
+                recent_comments=recent_generated_comments(
+                    limit=20, campaign_key=campaign_key
+                ),
+                campaign=campaign,
             )
-            export_lead(draft_id)
-            notify_new_lead(draft_id, campaign=campaign)
-            drafted += 1
+            comment_text = draft.get("comment_text", "")
+        except OpenAIError as exc:
+            errors += 1
+            logger.error(
+                "OpenAI draft generation failed for %s: %s", post["reddit_id"], exc
+            )
+            comment_text = ""
+        except Exception as exc:
+            errors += 1
+            logger.exception("failed to generate draft for %s: %s", post["reddit_id"], exc)
+            comment_text = ""
 
+        draft_id = save_draft(
+            reddit_id=post["reddit_id"],
+            intent_score=score,
+            reason=qualification["reason"],
+            comment_text=comment_text,
+            response_type=strategy["response_type"],
+            should_reply=strategy["should_reply"],
+            should_mention_brand=strategy["should_mention_brand"],
+            should_include_link=strategy["should_include_link"],
+            strategy_reason=strategy["reason"],
+            qualification=qualification,
+            campaign_key=campaign_key,
+        )
+        export_lead(draft_id)
+        notify_new_lead(draft_id, campaign=campaign)
+        drafted += 1
+
+    fetch_stats = get_fetch_stats()
     logger.info(
-        "scan complete scanned=%s new=%s analyzed=%s drafted=%s errors=%s",
+        "scan complete provider=%s queries=%s requests=%s raw_results=%s "
+        "valid_results=%s after_filters=%s rejected_not_post=%s scanned=%s "
+        "rejected_subreddit=%s rejected_term=%s rejected_age=%s "
+        "new=%s analyzed=%s drafted=%s errors=%s",
+        fetch_stats.get("discovery_provider"),
+        fetch_stats.get("queries_planned", 0),
+        fetch_stats.get("perplexity_requests", 0),
+        fetch_stats.get("perplexity_raw_results", 0),
+        fetch_stats.get("perplexity_results", 0),
+        fetch_stats.get("results_after_dedupe", 0),
+        fetch_stats.get("results_rejected_not_post", 0),
         scanned,
+        fetch_stats.get("results_rejected_excluded_subreddit", 0),
+        fetch_stats.get("results_rejected_excluded_term", 0),
+        fetch_stats.get("results_rejected_age", 0),
         new_posts,
         analyzed,
         drafted,
         errors,
     )
-    fetch_stats = get_fetch_stats()
-    status = "completed"
-    if (
-        fetch_stats.get("circuit_state") == "open"
-        or fetch_stats.get("rate_limited_requests", 0) > 0
-    ):
-        status = "reddit_rate_limit_cooldown"
-
+    status = "completed_with_fallback" if fetch_stats.get("apify_triggered") else "completed"
     return {
         "status": status,
         "campaign_key": campaign_key,
@@ -295,4 +319,26 @@ def _run_scan_unlocked(
         "qualification_skips": qualification_skips,
         "errors": errors,
         **fetch_stats,
+    }
+
+
+def _provider_failure_result(
+    status: str,
+    message: str,
+    campaign: Campaign,
+    campaign_key: str,
+) -> dict:
+    return {
+        "status": status,
+        "message": message,
+        "campaign_key": campaign_key,
+        "campaign_name": campaign.name,
+        "scanned": 0,
+        "new_posts": 0,
+        "analyzed": 0,
+        "drafted": 0,
+        "duplicates": 0,
+        "qualification_skips": 0,
+        "errors": 1,
+        **get_fetch_stats(),
     }

@@ -6,8 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from fastapi import HTTPException
-
 from app.ai import generate_campaign_setup_from_website
 from app.campaign import MarketConfig, get_campaign_records
 from app.config import Settings
@@ -39,7 +37,6 @@ def generated_payload() -> dict:
             "languages": ["English"],
             "customer_signals": ["sales team", "pipeline"],
             "exclude_terms": ["job posting"],
-            "require_market_signal": False,
         },
         "discovery": {
             "keywords": [
@@ -85,6 +82,8 @@ class ProductSetupV05Test(unittest.TestCase):
     def test_fresh_settings_do_not_register_example_campaign(self):
         settings = Settings(_env_file=None)
         self.assertEqual(settings.configured_campaign_paths, [])
+        self.assertEqual(settings.discovery_scan_interval_minutes, 60)
+        self.assertEqual(settings.max_ai_posts_per_scan, 150)
         self.assertEqual(MarketConfig().languages, [])
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace.yaml"
@@ -112,6 +111,7 @@ class ProductSetupV05Test(unittest.TestCase):
         self.assertEqual(campaign["qualification"]["scoring_mode"], "ai_adaptive")
         self.assertFalse(campaign["engagement"]["allow_brand_mentions"])
         self.assertFalse(campaign["engagement"]["allow_links"])
+        self.assertNotIn("require_market_signal", campaign["market"])
         self.assertEqual(result["sample_post"]["subreddit"], "sales")
 
     def test_generate_endpoint_combines_safe_research_and_ai_setup(self):
@@ -134,16 +134,25 @@ class ProductSetupV05Test(unittest.TestCase):
         self.assertEqual(result["source"]["pages_read"], 1)
         generate.assert_called_once()
 
-    def test_generate_endpoint_turns_website_failure_into_clear_400(self):
+    def test_generate_endpoint_uses_search_when_direct_website_read_fails(self):
+        expected = {"campaign": {"name": "Example"}, "sample_post": {}, "review_notes": []}
         with patch("app.main._require_openai_key"), patch(
             "app.main.research_product_website",
             side_effect=WebsiteReadError("The website could not be reached."),
-        ):
-            with self.assertRaises(HTTPException) as raised:
-                generate_product_setup(ProductSetupGenerateRequest(website_url="example.com"))
-        self.assertEqual(raised.exception.status_code, 400)
-        self.assertIn("could not be reached", raised.exception.detail)
-        self.assertIn("product description", raised.exception.detail)
+        ), patch(
+            "app.main.research_website_with_perplexity",
+            return_value={
+                "final_url": "https://example.com",
+                "prompt_text": "Search-indexed product page",
+                "pages_read": 2,
+            },
+        ), patch(
+            "app.main.generate_campaign_setup_from_website", return_value=expected
+        ) as generate:
+            result = generate_product_setup(ProductSetupGenerateRequest(website_url="example.com"))
+        self.assertEqual(result["source"]["pages_read"], 2)
+        self.assertIn("Perplexity", result["source"]["warning"])
+        self.assertEqual(generate.call_args.kwargs["website_research"], "Search-indexed product page")
 
     def test_generate_endpoint_can_fall_back_to_operator_notes(self):
         expected = {"campaign": {"name": "Example"}, "sample_post": {}, "review_notes": []}
@@ -205,4 +214,3 @@ class WebsiteSafetyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

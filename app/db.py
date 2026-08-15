@@ -201,6 +201,7 @@ def save_draft(
     strategy_reason: str = "",
     qualification: dict | None = None,
     campaign_key: str = "default",
+    status: str = "new",
 ) -> int:
     import json
     qualification = qualification or {}
@@ -217,13 +218,14 @@ def save_draft(
                 market_fit_score, positive_signals, negative_signals,
                 campaign_key, created_at
             )
-            VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 storage_reddit_id,
                 intent_score,
                 reason,
                 comment_text,
+                status,
                 response_type,
                 int(should_reply),
                 int(should_mention_brand),
@@ -453,8 +455,13 @@ def lead_stats(campaign_key: str | None = None) -> dict:
         total_posts = conn.execute(
             f"SELECT COUNT(*) AS count FROM posts{clause}", params
         ).fetchone()
+        lead_clause = " WHERE status != 'skipped'"
+        lead_params: tuple[object, ...] = ()
+        if campaign_key:
+            lead_clause += " AND campaign_key = ?"
+            lead_params = (campaign_key,)
         total_leads = conn.execute(
-            f"SELECT COUNT(*) AS count FROM drafts{clause}", params
+            f"SELECT COUNT(*) AS count FROM drafts{lead_clause}", lead_params
         ).fetchone()
         outcomes = conn.execute(
             f"""SELECT outcome, COUNT(*) AS count,
@@ -477,4 +484,3 @@ def lead_stats(campaign_key: str | None = None) -> dict:
             "conversion_value": sum(float(row["value"] or 0) for row in outcomes),
             "qualified_rate": (qualified / replied) if replied else 0,
         }
-
