@@ -1,120 +1,263 @@
 # Reddit Lead Finder 中文说明
 
-Reddit Lead Finder 是一个开源、自部署、人工审核的 Reddit 获客系统。
-它根据每个产品的 Product Setup 发现帖子、过滤市场、评估购买意图、选择回复策略、
-生成草稿并发送 Slack 或邮件提醒，但不会自动发布评论。
+[English README](README.md)
 
-V0.7.5 使用 `Perplexity 主搜索 + Apify 按需兜底 + OpenAI 分析`，并扩大了对选型、比较、迁移、替换、询价和竞品痛点帖子的召回。默认每小时自动扫描一次，每轮最多深度分析 150 篇新帖子。
-日常扫描不再直接请求 Reddit RSS。Perplexity 会限制搜索域名为 `reddit.com`，按照 Campaign
-的时间范围搜索，并将最多 5 个查询合并到一次请求。返回结果统一转换、过滤和去重后，
-才会进入 OpenAI 购买意图分析。
+**输入一个产品链接，自动建立完整的 Reddit Marketing Campaign。**
 
-Apify 默认只在 Perplexity 失败或有效帖子少于设定数量时启动。每次兜底有严格的帖子数量
-上限，不抓评论，也不开启 Apify 自带的 AI 分析，从而控制费用。如果 Apify 失败，已经取得的
-Perplexity 结果仍然会继续处理，不会让整次扫描归零。
+Reddit Lead Finder 会研究产品网站，生成产品 Campaign，寻找相关 Reddit 帖子，
+判断购买意图和产品匹配度，并为值得回复的帖子生成个性化草稿。
 
-创建 Campaign 时，如果产品网站阻止直接读取，系统也会自动用 Perplexity 搜索该网站的公开
-页面作为备选。即使两种读取方式都失败，也会根据网址和用户填写的产品说明生成一份保守配置，
-并标记需要确认的内容，不再直接卡死在网站读取错误。
+它是一个开源、自部署、人工审核的 Reddit 营销与获客工具。系统不会自动发帖、
+自动私信或自动投票，每一条回复都由用户最终决定。
 
-V0.6.0 将扫描方式从“定时一次跑完全部搜索”改成了持久化分批队列。扫描器每 10 分钟
-唤醒一次，每轮只处理当前最需要更新的 3 到 8 个 RSS 地址，并在不同产品之间轮换。
-未命中缓存的请求会随机间隔 8 到 15 秒。高意图搜索每 30 到 60 分钟更新，普通搜索
-每 2 到 3 小时更新，相邻社区和研究型搜索每 6 到 12 小时更新。
+## 从产品链接到回复草稿
 
-每个 RSS 地址的上次尝试、成功时间、下次执行时间和错误状态都会保存到 SQLite。
-收到第一个 429 后会立即停止本轮剩余 Reddit 请求，并严格遵守 `Retry-After`。如果
-Reddit 没有返回该信息，则全局冷却时间按 2、4、8、12 小时升级。重启软件不会清空
-这些状态，冷却期间仍然可以查看、审核、编辑和导出已有结果。
+1. **输入产品链接**
 
-V0.5.0 增加了网址生成完整配置的流程。第一次打开时不再预载 AI Meeting Notes、
-English 或任何示例。输入产品公开网址后，AI 会生成 Product、Market、Discovery、
-Qualification、Engagement、Review & Test 六个部分，用户只需逐项审核和修改。
+   填写产品的公开网站。系统会读取有限数量的公开产品页面。
 
-网址读取会阻止本地和私有网络地址，检查重定向，并限制超时、页面大小和读取页数。
-AI 生成的 subreddit 只是候选社区，不代表已经确认允许品牌推广，发布前仍需人工核对规则。
+2. **AI 自动建立 Campaign**
 
-## 快速开始
+   AI 自动生成产品介绍、价值主张、目标客户、竞品、市场、购买信号、
+   Reddit 搜索词和相关 subreddit。
+
+3. **寻找相关 Reddit 帖子**
+
+   Perplexity Search API 根据用户可能使用的自然语言搜索公开 Reddit 页面。
+   帖子不需要出现完全相同的产品名称，只要问题、需求或购买场景相关即可进入分析。
+   当主搜索结果不足时，可以选择使用 Apify 兜底。
+
+4. **判断购买意图和产品匹配度**
+
+   OpenAI 分析帖子相关性、购买意图、产品匹配度、紧迫度、可回复性、
+   市场匹配度和推广风险。
+
+5. **生成个性化回复草稿**
+
+   符合条件的帖子会获得回复策略和草稿。分数较低的候选帖子仍会显示在
+   **Skipped** 中，并保留 AI 判断原因，不会直接消失。
+
+6. **人工审核并发布**
+
+   用户阅读原帖、检查 subreddit 规则、修改草稿，然后决定是否亲自发布。
+
+```text
+产品链接
+    -> AI 产品 Campaign
+    -> 相关 Reddit 帖子
+    -> 购买意图与产品匹配评分
+    -> 个性化回复草稿
+    -> 人工审核与发布
+```
+
+## AI 自动生成的 Campaign 包含什么
+
+Product Setup 包含六个可以编辑的部分：
+
+1. **Product**：产品介绍、价值主张、目标客户、竞品和产品限制
+2. **Market**：国家、语言、客户信号和排除条件
+3. **Discovery**：用户搜索语言、核心 subreddit、相邻社区和搜索时间范围
+4. **Qualification**：购买信号、噪音信号、最低分数和帖子最大年龄
+5. **Engagement**：回复语气、品牌提及、链接、身份披露和字数限制
+6. **Review & Test**：使用一篇样本 Reddit 帖子测试评分、策略和草稿
+
+所有内容都可以在 Campaign 保存前由用户审核和修改。
+
+## 适合谁使用
+
+- Growth 和 Product Marketing 团队
+- Founder 和早期 Startup
+- 同时管理多个产品或客户的 Agency
+- 希望发现正在选型或寻找解决方案的 Sales 和 Community 团队
+- 希望使用 AI 提高效率，但不希望自动发帖的运营人员
+
+## 核心功能
+
+- 根据产品网站自动生成完整 Campaign
+- 语义搜索与关键词搜索结合的 Reddit 帖子发现
+- 覆盖产品、竞品、用户痛点、推荐、价格、迁移和产品比较场景
+- Perplexity 作为主搜索服务
+- 可选的 Apify 兜底
+- OpenAI 购买意图和产品匹配分析
+- 可解释的多维度评分
+- 先选择回复策略，再生成草稿
+- 个性化且可以编辑的回复草稿
+- 每一条回复都需要人工批准
+- 多产品和多客户独立工作区
+- `Needs review`、`Ready to reply`、`Published` 和 `Skipped` 工作流
+- Slack 和邮件通知
+- SQLite、CSV、Markdown 和 Performance 报告
+- 跨帖去重
+- 可选的 Dashboard 密码保护
+- 支持 Docker 和本地 Python 安装
+
+## V0.7.5 如何搜索帖子
+
+Perplexity 是主要搜索服务。系统会把每条 Campaign query 作为独立的 Search API
+请求发送，并将域名限制为 `reddit.com`，同时使用 Campaign 中选择的时间范围。
+返回结果经过 Reddit 帖子识别、格式转换和去重后，才会交给 OpenAI 分析。
+
+搜索以召回相关需求为优先。即使帖子没有写出产品名称，只要它表达了相关问题、
+竞品不满、产品比较、迁移需求、实施问题或相同目标，也可以被判断为相关候选帖子。
+
+Apify 是可选兜底。只有启用 Apify，并且 Perplexity 失败或有效结果少于设定数量时，
+系统才会调用 Apify。Apify 不抓取评论，也不开启 Actor 自带的 AI 分析。
+
+默认每小时自动扫描一次，每轮最多将 150 篇新帖子发送给 OpenAI 分析。
+用户也可以随时手动扫描。
+
+## 使用 Docker 快速开始
 
 ```bash
+git clone https://github.com/rui-ning-716/reddit-lead-finder.git
+cd reddit-lead-finder
 cp .env.example .env
 ```
 
-在 `.env` 中填写 OpenAI 和 Perplexity API key。Apify 是可选兜底：
+在 `.env` 中填写：
 
 ```text
-OPENAI_API_KEY=你的_API_Key
-PERPLEXITY_API_KEY=你的_Perplexity_API_Key
-APIFY_API_TOKEN=可选的_Apify_Token
+OPENAI_API_KEY=你的_OpenAI_Key
+PERPLEXITY_API_KEY=你的_Perplexity_Key
+
+# 可选兜底
+APIFY_API_TOKEN=
 ```
 
-然后运行：
+启动：
 
 ```bash
 docker compose up --build
 ```
 
-打开 `http://localhost:8000`。
+打开 [http://localhost:8000](http://localhost:8000)。
 
-打开 `http://localhost:8000`。第一次使用时输入产品公开网址，点击生成 Product Setup。
-检查 AI 填写的六个部分后再保存。之后可点右上角 `+ Add product` 新建不同产品或客户的独立工作区。
+## 不使用 Docker，在 Mac 本地运行
 
-页面包含六个步骤：
-
-1. Product：产品介绍、价值、客户和限制
-2. Market：国家、语言、客户信号和排除市场
-3. Discovery：关键词、竞品、核心/相邻/仅观察 subreddit、社区规则和AI建议
-4. Qualification：Opportunity 门槛、正向和负向购买信号，以及 AI 自适应评分
-5. Engagement：品牌提及、链接、披露语、语气和字数
-6. Review & Test：粘贴样本帖子测试评分、策略和草稿
-
-最后可以选择保存 Product Setup，或者保存后马上搜索 Reply Opportunities。页面保存的内容会写入该
-产品自己的 YAML 文件，方便后续复制、版本管理和分享。
-
-Perplexity 会根据关键词搜索公开 Reddit 页面，并使用 Campaign 的时间范围限制结果。
-AI 只会在帖子被召回后再判断语义和购买意图，因此同一个需求最好准备多种用户可能使用的
-表达方式。只有主搜索结果不足时才会调用 Apify。
-
-## 同时管理多个客户
-
-点击顶部的 `+ Add product` 即可建立独立产品工作区。每个产品都有
-自己的配置、Reply Opportunities、状态、通知和 Performance。页面顶部可以切换产品。同一个 Reddit 帖子可以针对不同产品分别评分，
-客户之间的帖子、草稿、状态、负责人和结果不会混在一起。审核流程为：
-
-```text
-New -> Approved -> Replied -> Outcome
-                  -> Skipped
+```bash
+git clone https://github.com/rui-ning-716/reddit-lead-finder.git
+cd reddit-lead-finder
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
 ```
 
-在 `/report` 查看 Performance，在 `/report.csv` 下载当前产品的完整数据。
+填写 `.env` 后运行：
 
-如果你从早期版本升级且历史 Leads 混在一起，先新建目标 Campaign，再在 Lead 卡片底部用
-`Move to campaign` 将每条历史 Lead 移过去。移动后对应的统计和报告也会一起归属到新 Campaign。
+```bash
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
 
-如果 Dashboard 会被其他人通过网络访问，请同时配置：
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
+
+## 第一次建立 Campaign
+
+1. 在首页输入一个产品公开网站。
+2. 点击 **Generate product setup**。
+3. 检查 Product Setup 的六个部分。
+4. 在 Discovery 中检查搜索词、subreddit、时间范围和每条 query 的结果数量。
+5. 在 Qualification 中检查最低分数和帖子最大年龄。
+6. 使用一篇样本 Reddit 帖子测试评分和回复草稿。
+7. 点击 **Save and find opportunities**。
+8. 在 **Reply Opportunities** 中审核真实帖子和 AI 草稿。
+
+点击 **+ Add product** 可以为其他产品或客户建立完全独立的工作区。
+
+## Opportunity 评分
+
+AI 会返回多个独立评分，最终 Priority 由程序根据 Campaign 设置的权重和扣分重新计算。
+
+| 维度 | 判断内容 |
+| --- | --- |
+| Relevance | 帖子是否涉及相同问题或使用场景 |
+| Purchase intent | 用户是否正在寻找、比较、替换或准备购买解决方案 |
+| Product fit | 产品能否真正解决用户需求 |
+| Urgency | 用户是否需要尽快解决问题 |
+| Reachability | 一条公开回复是否能够提供帮助 |
+| Market fit | 是否存在明确的市场匹配或不匹配证据 |
+| Promotion risk | 品牌参与回复是否会显得打扰或过度推广 |
+
+没有提到预算、地区、公司规模或时间，不会自动被判定为不合格。只有明确不匹配的
+证据才会降低 Priority。
+
+## 回复策略
+
+- `helpful_only`：只提供帮助，不提产品
+- `expert_answer`：提供专业建议，不提产品
+- `soft_mention`：先提供帮助，再披露身份并简短提及产品
+- `direct_recommendation`：只用于明确寻找推荐且产品匹配度很高的帖子
+- `skip`：不建议参与
+
+品牌提及和链接必须遵守 Campaign 设置。系统不会自动发布草稿。
+
+## 多产品管理和报告
+
+每个 Product Workspace 都有独立的 Campaign、帖子、草稿、状态、通知、负责人、
+结果和转化价值。同一个 Reddit 帖子可以针对不同产品分别评分，不会混合数据。
+
+打开 `/report` 查看 Performance，或者通过 `/report.csv` 导出数据。
+运营流程说明见 [`docs/MANAGED_SERVICE.md`](docs/MANAGED_SERVICE.md)。
+
+## 可选通知
+
+Slack：
+
+```text
+SLACK_NOTIFICATIONS_ENABLED=true
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+SLACK_MIN_INTENT_SCORE=0.72
+```
+
+Email：
+
+```text
+EMAIL_NOTIFICATIONS_ENABLED=true
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=you@example.com
+SMTP_PASSWORD=app-password
+EMAIL_FROM=you@example.com
+EMAIL_TO=owner@example.com
+```
+
+通知失败不会中断扫描。
+
+## Dashboard 安全
+
+如果 Dashboard 可以从外网访问，请设置用户名、密码并使用 HTTPS：
 
 ```text
 DASHBOARD_USERNAME=operator
 DASHBOARD_PASSWORD=一个足够长且唯一的密码
 ```
 
-并使用 HTTPS。更完整的托管服务操作说明见 `docs/MANAGED_SERVICE.md`。
+这适合由运营人员管理的 Pilot，不是完整的公开多租户 SaaS 登录系统。
 
-## 可配置内容
+## 安全与社区规则
 
-- 产品名称、介绍、价值、限制和目标客户
-- 国家、语言、市场信号和排除词
-- Reddit关键词、subreddit和搜索时间范围
-- 正向与负向购买信号
-- Lead score门槛
-- Relevance、购买意图、产品匹配度、紧迫度和可回复性的相对权重
-- 推广风险和市场不匹配的扣分，以及每个评分维度下的细分判断信号
-- 是否允许品牌提及、链接和披露语
+Reddit Lead Finder 不会自动发帖、自动私信、自动投票、创建账号或隐藏品牌关系。
+回复前必须：
 
-项目自带 SaaS、本地服务和开发者工具三个示例。详细配置、评分逻辑、部署方式、
-安全要求与贡献方式请阅读英文版 `README.md`。
+1. 阅读完整帖子和评论背景。
+2. 检查当前 subreddit 规则。
+3. 根据真实情况修改草稿。
+4. 提及产品时披露关系。
+5. 如果品牌参与会显得打扰，就跳过该帖子。
 
-## 重要原则
+请阅读 Reddit 的 [Spam Policy](https://support.reddithelp.com/hc/en-us/articles/360043504051-Spam)
+和 [Responsible Builder Policy](https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy)。
 
-Reddit Lead Finder 不自动发布、不自动私信、不伪装成真实客户。任何品牌提及都应披露关系，
-用户必须先阅读原帖和社区规则，再决定是否回复。
+## 开发
+
+```bash
+make install
+make test
+make check
+```
+
+不要提交 `.env`、`data/`、导出文件或 SQLite 数据库。详见 [`SECURITY.md`](SECURITY.md)。
+
+## License
+
+MIT
