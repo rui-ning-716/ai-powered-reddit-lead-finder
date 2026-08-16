@@ -54,7 +54,7 @@ def render_dashboard(
 const campaignKey={json.dumps(campaign_key)};
 document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>document.querySelectorAll('.card').forEach(c=>c.hidden=b.dataset.filter!=='all'&&!c.classList.contains('status-'+b.dataset.filter)));
 document.getElementById('campaign-switch').onchange=e=>location.href='/?campaign='+encodeURIComponent(e.target.value);
-document.getElementById('scan').onclick=async e=>{{e.target.disabled=true;e.target.textContent='Searching...';const r=await fetch('/scan-now?campaign='+encodeURIComponent(campaignKey),{{method:'POST'}});const data=await r.json();if(data.status==='cooldown'||data.status==='reddit_rate_limit_cooldown'){{alert(data.message||'Reddit is temporarily rate limiting searches. Please try again later.')}}else{{location.reload()}}e.target.disabled=false}};
+document.getElementById('scan').onclick=async e=>{{e.target.disabled=true;e.target.textContent='Searching...';try{{const r=await fetch('/scan-now?campaign='+encodeURIComponent(campaignKey),{{method:'POST'}});const data=await r.json();if(['cooldown','configuration_error','provider_error','already_running'].includes(data.status)){{alert(data.message||'The search provider is temporarily unavailable. Please try again.')}}else{{location.reload()}}}}finally{{e.target.disabled=false;e.target.textContent='Find opportunities'}}}};
 async function statusUpdate(id,status,extra={{}}){{let feedback_reason=null,final_comment=null;if(status==='skipped')feedback_reason=prompt('Why are you skipping this opportunity? (optional)');if(status==='replied')final_comment=prompt('Paste the final published reply if you want to save it. (optional)');await fetch(`/leads/${{id}}/status`,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{status,feedback_reason,final_comment,...extra}})}});location.reload()}}
 async function assignLead(id,status){{const assignee=prompt('Assign this opportunity to:');if(assignee!==null)await statusUpdate(id,status,{{assignee}})}}
 async function trackOutcome(id,status){{const outcome=prompt('Outcome: positive_reply, qualified_lead, converted, no_response, or none','qualified_lead');if(!outcome)return;let conversion_value=null;if(outcome==='converted'){{const raw=prompt('Tracked conversion value (optional)');if(raw)conversion_value=Number(raw)}}await statusUpdate(id,status,{{outcome,conversion_value}})}}
@@ -82,6 +82,7 @@ def _render_lead_card(
     status = escape(lead.get("status") or "new")
     status_label = escape(_status_label(status))
     brand_label = "Brand mention" if lead.get("should_mention_brand") else "No brand mention"
+    reason_label = "Why it was skipped" if status == "skipped" else "Why it qualifies"
     if status == "new":
         actions = (
             f'<button class="success" onclick="statusUpdate({lead["id"]},\'approved\')">Ready to reply</button>'
@@ -121,7 +122,7 @@ def _render_lead_card(
 <div class="muted">Matched: {escape(lead.get('query') or '')} · <time class="local-time" datetime="{escape(created)}">{escape(created)}</time></div>
 {excerpt_html}
 <div class="scores">{_meter('Relevance',value('relevance_score'))}{_meter('Purchase intent',value('purchase_intent_score'))}{_meter('Product fit',value('product_fit_score'))}{_meter('Urgency',value('urgency_score'))}{_meter('Promotion risk',value('promotion_risk_score'))}</div>
-<p class="reason"><strong>Why it qualifies:</strong> {escape(lead.get('reason') or '')}</p><p class="reason"><strong>Recommended strategy:</strong> {escape(lead.get('strategy_reason') or '')}</p>
+<p class="reason"><strong>{reason_label}:</strong> {escape(lead.get('reason') or '')}</p><p class="reason"><strong>Recommended strategy:</strong> {escape(lead.get('strategy_reason') or '')}</p>
 <div class="signals"><div class="signal"><strong>Positive signals</strong>{_list_html(positive)}</div><div class="signal"><strong>Risks / negative signals</strong>{_list_html(negative)}</div></div>
 <div class="draft" id="draft-{lead['id']}">{escape(lead.get('comment_text') or '(No draft generated)')}</div>
 <div class="actions"><button class="primary" onclick="copyDraft({lead['id']})">Copy draft</button><a class="button" href="{escape(lead.get('permalink') or '')}" target="_blank" rel="noopener noreferrer">Open on Reddit</a>{actions}{move_control}</div>

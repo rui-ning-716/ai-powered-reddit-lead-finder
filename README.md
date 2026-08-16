@@ -8,6 +8,29 @@ market and customer fit, scores buying intent, recommends how to engage,
 drafts a useful reply, and sends qualified opportunities to Slack or email.
 It never auto-posts.
 
+## New in V0.7
+
+Discovery no longer depends on direct Reddit RSS requests. Perplexity Search API
+is the primary provider, with `reddit.com` domain filtering, campaign lookback
+filters, broad buyer-language query expansion, and batches of up to five queries
+per paid request. Original campaign queries are searched before optional
+community-specific variations, so selecting a subreddit never replaces a broader
+semantic search. Results are normalized into the existing post format before
+filtering, deduplication, and OpenAI qualification. Relevant candidates that do
+not meet the reply threshold remain visible under **Skipped**, with their source
+post and AI reason, instead of disappearing from the dashboard.
+
+Apify is an optional, budget-capped fallback. It runs only when Perplexity fails
+or returns fewer than the configured minimum number of usable posts. A single
+fallback run has a strict result cap, does not fetch comments, and does not use
+Apify's optional AI analysis. Provider failures are isolated, so a failed
+fallback does not discard usable primary results.
+
+Product website onboarding now also uses Perplexity as a research fallback when
+a public website blocks direct reading. If both methods fail, the setup can still
+be drafted conservatively from the URL and optional operator notes instead of
+ending at a blocking error.
+
 ## New in V0.6
 
 Reddit discovery now runs as a persistent, paced queue instead of fetching every
@@ -88,7 +111,9 @@ data.
 - Client-ready HTML report and live CSV export
 - Optional password protection for externally reachable dashboards
 - Cross-post deduplication
-- Persistent Reddit RSS scheduling, randomized request spacing, global 429 cooldown, and 5xx backoff
+- Perplexity primary discovery with bounded multi-query batching and retry handling
+- Budget-capped Apify fallback with provider-level failure isolation
+- Website research fallback for product setup
 - Docker and Docker Compose support
 
 ## Quick start
@@ -99,11 +124,12 @@ cd reddit-lead-finder
 cp .env.example .env
 ```
 
-Add your OpenAI API key and a descriptive Reddit User-Agent to `.env`:
+Add your OpenAI and Perplexity API keys to `.env`. Apify is optional:
 
 ```text
 OPENAI_API_KEY=your_key_here
-REDDIT_USER_AGENT="reddit-lead-finder/0.6 (contact: you@example.com)"
+PERPLEXITY_API_KEY=your_key_here
+APIFY_API_TOKEN=optional_fallback_token
 ```
 
 Start with Docker:
@@ -135,8 +161,8 @@ cp .env.example .env
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-The scheduler wakes every 10 minutes by default and processes only the most-due
-3 to 8 RSS feeds. To trigger a manually paced scan:
+The scheduler runs every hour by default and analyzes up to 150 new posts per
+scan. To trigger a manual scan:
 
 ```bash
 curl -X POST http://localhost:8000/scan-now
@@ -161,11 +187,10 @@ Use **Save product setup** to update the current workspace YAML or **Save and fi
 opportunities** to save and immediately start a manual scan. Saving is rejected while
 another scan is active, preventing a scan from mixing two configurations.
 
-Reddit RSS search is lexical. Search queries do not need to match an entire post
-title, but Reddit first retrieves posts based on the words and phrases in each
-query. Quotation marks make a multi-word phrase more exact. AI evaluates meaning
-and buying intent only after Reddit returns a candidate post, so use several ways
-a buyer might describe the same problem.
+Perplexity searches public Reddit pages using the campaign queries and lookback
+window. Use several ways a buyer might describe the same problem. OpenAI evaluates
+meaning and buying intent only after discovery returns a candidate post. Apify
+supplements the result set only when the primary search is insufficient.
 
 ### YAML setup
 
@@ -192,7 +217,6 @@ market:
   languages: [English]
   customer_signals: [startup, founder, remote team]
   exclude_terms: []
-  require_market_signal: false
 
 discovery:
   keywords:
@@ -360,23 +384,24 @@ EMAIL_TO=owner@example.com,teammate@example.com
 
 Notification failures do not stop scanning.
 
-## Reddit rate limits
+## Provider reliability and cost controls
 
-Reddit RSS may return HTTP 429. Reddit Lead Finder distributes feeds across
-10-minute scheduler ticks, spaces uncached requests by 8 to 15 seconds, and saves
-per-feed pacing in SQLite. High-intent searches run more often than standard and
-research feeds without creating one large request burst.
+Production scans do not call Reddit RSS. Perplexity requests retry only bounded
+temporary failures and process at most five campaign queries in each API call.
+Apify runs only when the primary result set is below
+`APIFY_FALLBACK_MIN_RESULTS`, and each Actor run is capped by
+`APIFY_MAX_RESULTS_PER_SCAN`.
 
-The first 429 immediately stops the remaining Reddit requests in that scan. The
-app follows `Retry-After` exactly. Without that header, it pauses globally for 2
-hours, then escalates repeated 429s to 4, 8, and 12 hours. This state survives an
-application restart. Temporary network and 5xx failures still use bounded
-exponential backoff. Manual scans have a separate 15-minute cooldown and cannot
-bypass an active Reddit cooldown.
+The default automatic interval is one hour, with up to 150 new posts sent to
+OpenAI analysis per scan. Manual scans have a two-minute cooldown and share the
+same provider budgets. If Perplexity succeeds but Apify
+fails, primary results are preserved. If neither provider is configured or
+available, the API returns an explicit configuration or provider error instead
+of reporting a misleading successful scan with zero posts.
 
-RSS is convenient but less reliable than registered API access. Keep request
-volume conservative and review current Reddit developer requirements before
-production use.
+These controls improve operational reliability but do not grant rights to use
+third-party content. Review current Reddit, Perplexity, and Apify terms before a
+commercial launch, and use only the minimum post data needed for human review.
 
 ## Safety and community respect
 

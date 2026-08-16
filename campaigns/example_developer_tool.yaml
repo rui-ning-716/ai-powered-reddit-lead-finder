@@ -11,7 +11,6 @@ market:
   languages: [English]
   customer_signals: [backend, API, Kubernetes, OpenTelemetry, latency]
   exclude_terms: []
-  require_market_signal: false
 discovery:
   keywords: ['"API observability"', '"debug API latency"', '"OpenTelemetry alternative"']
   subreddits: [programming, devops, selfhosted]
@@ -30,4 +29,3 @@ engagement:
   tone: Technical, direct, and transparent
   disclosure: I contribute to TraceKit.
   max_words: 160
-

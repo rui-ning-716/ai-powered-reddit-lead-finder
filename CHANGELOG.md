@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.7.5
+
+- Increased the production default from 25 to 150 AI-analyzed new posts per scan.
+- Changed the automatic Perplexity discovery schedule from every six hours to every hour.
+- Applied both defaults in application settings and `.env.example`, so fresh installs and
+  deployments without explicit overrides behave consistently.
+
+## 0.7.4
+
+- Removed the Market setup checkbox that required a country, customer, or location
+  signal. Older campaign files still load, but the legacy field is ignored.
+- Replaced the conflicting model boolean plus score gate with one deterministic
+  qualification decision based on the visible component scores and campaign threshold.
+- Recalibrated AI buying-intent guidance so category recommendations, comparisons,
+  migrations, quotes, replacements, build-versus-buy decisions, and competitor pain do
+  not require an explicit campaign-brand mention.
+- Changed missing geography, budget, company size, timeline, and customer details from
+  disqualifiers to unknown evidence. Only an explicit market mismatch can reduce priority.
+- Reduced the evidence-confidence penalty so incomplete search snippets cannot erase
+  strong intent expressed in the Reddit title.
+- Moved excluded terms out of pre-AI substring filtering. Semantic qualification can now
+  preserve cases such as an author outgrowing a free CRM and seeking a paid replacement.
+- Fixed discovery ranking so the Perplexity query itself cannot make an unrelated result
+  look high-intent. Author titles and post excerpts now control ranking, with extra weight
+  for direct questions and evaluation language.
+- Removed the redundant scanner-level market-fit gate that could prevent a qualified post
+  from receiving a reply strategy and draft.
+
+## 0.7.3
+
+- Fixed the exact-phrase market prefilter that removed hundreds of semantically
+  relevant posts before AI analysis when "Require market signal" was enabled.
+- Moved market-signal enforcement into semantic AI qualification and made the
+  checkbox a hard gate only when the operator enables it.
+- Kept strict recent-post filtering and changed generated campaigns to default to
+  seven days, with 30 days available for lower-volume categories.
+- Added product, pricing, upgrade, competitor migration, and replacement query
+  variants for high-intent discovery.
+- Ranked active evaluation, recommendation, pricing, switching, and migration
+  conversations ahead of generic mentions before the OpenAI analysis limit is applied.
+
+## 0.7.2
+
+- Fixed Perplexity Search API requests to send one supported string query at a time.
+- Broadened Reddit result normalization to accept canonical, old Reddit, query-string,
+  and provider-supplied post identity formats.
+- Added discovery diagnostics for planned queries, raw results, valid Reddit posts,
+  and rejected result counts.
+
+## 0.7.1
+
+- Expanded the default discovery capacity to 40 campaign queries, 20 Perplexity results per query, and 25 AI-reviewed posts per scan.
+- Preserved every broad buyer-language query before adding optional subreddit-specific variants, so a selected community cannot replace or narrow the primary search.
+- Updated AI-generated discovery setup to use 12 to 20 natural-language queries across buyer needs, alternatives, comparisons, pricing, implementation, and pain points.
+- Updated qualification guidance so semantic problem and intent matches do not require an exact campaign-product or keyword match.
+- Preserved non-qualified but relevant candidates as visible **Skipped** records with the source post, scores, and AI reason. They never generate a reply draft or trigger notifications.
+
+## 0.7.0
+
+- Replaced the production Reddit RSS scan path with Perplexity Search API as the primary discovery provider.
+- Added `reddit.com` domain filtering, campaign recency filters, and batches of up to five queries per request.
+- Added an optional Apify Reddit Scraper fallback that runs only on primary failure or insufficient results.
+- Added strict Apify result caps and disabled comment crawling and Actor-side AI analysis by default.
+- Normalized Perplexity and Apify payloads into one post model before market filtering, age filtering, and deduplication.
+- Added retry handling, provider-specific errors, partial-result preservation, and health endpoint configuration status.
+- Changed automatic discovery to a cost-controlled six-hour default interval.
+- Added Perplexity website research fallback when direct product-page reading is blocked.
+- Allowed conservative website-only Product Setup generation instead of returning a blocking error.
+- Added provider integration tests and runtime smoke coverage.
+
 ## 0.6.0
 
 - Replaced burst-style full scans with a persistent per-feed schedule that wakes every 10 minutes.

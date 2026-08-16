@@ -11,7 +11,6 @@ market:
   languages: [English]
   customer_signals: [Austin, Round Rock, Cedar Park, Texas]
   exclude_terms: [UK, Canada, Australia]
-  require_market_signal: true
 discovery:
   keywords: ['"cleaning service Austin"', '"move out cleaner Austin"', '"house cleaner recommendation"']
   subreddits: [Austin, AskAustin]
@@ -30,4 +29,3 @@ engagement:
   tone: Friendly, practical, and transparent
   disclosure: I am affiliated with BrightHome Cleaning.
   max_words: 120
-

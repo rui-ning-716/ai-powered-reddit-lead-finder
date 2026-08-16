@@ -144,11 +144,10 @@ CAMPAIGN_SETUP_SCHEMA = {
                     "languages": {"type": "array", "items": {"type": "string"}},
                     "customer_signals": {"type": "array", "items": {"type": "string"}},
                     "exclude_terms": {"type": "array", "items": {"type": "string"}},
-                    "require_market_signal": {"type": "boolean"},
                 },
                 "required": [
                     "countries", "languages", "customer_signals",
-                    "exclude_terms", "require_market_signal",
+                    "exclude_terms",
                 ],
             },
             "discovery": {
@@ -215,7 +214,7 @@ CAMPAIGN_SETUP_SCHEMA = {
 }
 
 QUALIFICATION_PROMPT = """
-Evaluate whether this Reddit post is a real, reachable lead for the configured product.
+Evaluate whether this Reddit post is a relevant, reachable potential lead for the configured product.
 
 Score each dimension independently:
 - relevance: how closely the post matches the problem the product solves
@@ -226,17 +225,46 @@ Score each dimension independently:
 - promotion risk: likelihood that a brand response would feel intrusive, irrelevant, or spammy
 - market fit: whether the author matches supported geography, language, and customer profile
 
-Do not confuse a keyword mention with buying intent. Job listings, news, tutorials,
-promotional posts, generic discussion, solved problems, and incidental mentions should
-normally receive low purchase-intent scores. Use only evidence in the post and campaign.
+Judge buying intent for the product category, not only intent for the configured brand.
+Do not require an exact product-name, keyword, country, company-size, or customer-signal
+match. A post can be relevant when it describes the same underlying problem, workflow,
+alternative, or buying situation that the configured product addresses.
+
+Calibrate purchase intent consistently:
+- 0.80 to 1.00: actively comparing vendors, requesting recommendations, reviewing a
+  quote, planning a migration, replacing a current tool, or specifying requirements for
+  a near-term selection
+- 0.60 to 0.79: clearly evaluating solutions, asking about pricing or implementation,
+  considering build versus buy, or reporting pain with a current product while looking
+  for options
+- 0.35 to 0.59: future migration interest, early research, or an implied but incomplete
+  evaluation
+- below 0.35: generic discussion, news, education, promotion, career content, or an
+  incidental product mention
+
+An explicit request for CRM recommendations is purchase intent even if Salesforce is not
+named. A competitor user asking about alternatives, migration, pricing, limitations, or
+replacement is also purchase intent. Score product fit separately. A smaller customer or
+an imperfect fit can still be a real buying-intent candidate.
+
+Treat the title as the author's primary request. Search-provider body text can be an
+excerpt or include nearby discussion, so it must not erase clear intent expressed in the
+title. Missing location, budget, company size, timeline, or brand mention means unknown,
+not disqualified. Only lower market fit for an explicit, evidenced mismatch.
+
+Do not confuse an incidental keyword mention with buying intent. Job listings, news,
+tutorials, promotional posts, generic discussion, solved problems, and unrelated
+mentions should normally receive low purchase-intent scores. Use only evidence in the
+post and campaign.
 Do not invent location, budget, company size, deadlines, or product capabilities.
 
 For AI adaptive scoring, infer the product-specific sub-signals internally from
 the campaign and the post. Do not expose those sub-signals to the user. Return
 an evidence_confidence_score based on how explicit, complete, and internally
 consistent the evidence in the post is. The application will deterministically
-calculate the final priority after your assessment, so return honest independent
-component scores rather than trying to game a total.
+calculate the final priority and qualification after your assessment. The returned
+is_qualified field is advisory and will not override the deterministic score. Return
+honest independent component scores rather than trying to game a total.
 """.strip()
 
 STRATEGY_PROMPT = """
@@ -247,7 +275,9 @@ expert_answer: give domain-specific guidance without mentioning the product.
 soft_mention: help first, then briefly mention the product with transparent affiliation.
 direct_recommendation: use only when the author explicitly asks for recommendations and
 the product strongly fits. Disclose affiliation.
-skip: use when a reply would be intrusive, promotional, low-value, or against the campaign rules.
+skip: use only when any public response would be intrusive, low-value, or against the
+community rules. Do not skip merely because a brand mention would be inappropriate.
+In that case choose helpful_only or expert_answer and omit the brand.
 
 Default to no brand mention. Never recommend a link unless campaign settings allow it and
 the author explicitly requests resources or links. A public reply must not pretend to be an
@@ -321,23 +351,45 @@ def validate_qualification(
         score_model.market_mismatch_penalty / 100
     ) * (1.0 - result["market_fit_score"])
     confidence = result["evidence_confidence_score"] if campaign.qualification.scoring_mode == "ai_adaptive" else 1.0
+    # Search-provider snippets are sometimes incomplete. Confidence may reduce
+    # priority modestly, but it must not erase strong buying evidence in a title
+    # or a partial body. Keep at least 75% of the evidence-based score.
+    confidence_factor = 0.75 + (0.25 * confidence)
+    location = str(result.get("location") or "").strip().casefold()
+    location_is_known = location not in {"", "unknown", "not specified", "unspecified", "n/a", "none"}
+    # Missing geography is unknown, not a mismatch. Apply the market deduction
+    # only when the model found an actual location and an evidenced mismatch.
+    market_mismatch_deduction = (
+        market_mismatch_deduction
+        if location_is_known and not bool(result.get("market_fit"))
+        else 0.0
+    )
     weighted_score = (
-        positive_score * confidence - promotion_risk_deduction - market_mismatch_deduction
+        positive_score * confidence_factor - promotion_risk_deduction - market_mismatch_deduction
     )
     result["lead_score"] = round(max(0.0, min(1.0, weighted_score)), 3)
     result["score_breakdown"] = {
         "normalized_weights": {name: round(value, 4) for name, value in weights.items()},
         "positive_score": round(positive_score, 4),
         "evidence_confidence": round(confidence, 4),
+        "confidence_factor": round(confidence_factor, 4),
         "promotion_risk_deduction": round(promotion_risk_deduction, 4),
         "market_mismatch_deduction": round(market_mismatch_deduction, 4),
     }
     threshold = campaign.qualification.minimum_lead_score
-    result["is_qualified"] = bool(
-        result.get("is_qualified")
-        and result.get("market_fit")
-        and result["lead_score"] >= threshold
-    )
+    # The model's boolean used to veto posts that its own component scores had
+    # already qualified. Use one transparent deterministic decision instead.
+    # These broad safety floors reject unrelated mentions while allowing category
+    # buyers, competitor switchers, and imperfect-fit prospects into review.
+    qualification_checks = {
+        "score": result["lead_score"] >= threshold,
+        "relevance": result["relevance_score"] >= 0.40,
+        "purchase_intent": result["purchase_intent_score"] >= 0.40,
+        "product_fit": result["product_fit_score"] >= 0.30,
+        "promotion_risk": result["promotion_risk_score"] < 0.85,
+    }
+    result["is_qualified"] = all(qualification_checks.values())
+    result["qualification_checks"] = qualification_checks
     result["positive_signals"] = [str(x) for x in result.get("positive_signals", [])][:8]
     result["negative_signals"] = [str(x) for x in result.get("negative_signals", [])][:8]
     return result
@@ -357,7 +409,28 @@ def decide_response_strategy(
             ),
             temperature=0.2,
         )
-        return validate_strategy(json.loads(content), campaign)
+        strategy = validate_strategy(json.loads(content), campaign)
+        # A low-risk qualified buyer should still receive a neutral draft even
+        # when the strategy model is overly cautious about mentioning a brand.
+        # High-risk or unreachable conversations may still be skipped.
+        if (
+            strategy["response_type"] == "skip"
+            and float(qualification.get("promotion_risk_score") or 0) < 0.60
+            and float(qualification.get("reachability_score") or 0) >= 0.50
+        ):
+            return {
+                "response_type": "expert_answer",
+                "should_reply": True,
+                "should_mention_brand": False,
+                "should_include_link": False,
+                "reason": (
+                    "Qualified, reachable opportunity. Provide a neutral expert answer "
+                    "without a brand mention."
+                ),
+                "tone": campaign.engagement.tone,
+                "key_points": strategy.get("key_points", [])[:6],
+            }
+        return strategy
     except Exception as exc:
         logger.warning("strategy selection failed; using conservative fallback: %s", exc)
         return conservative_strategy()
@@ -446,10 +519,16 @@ def _generate_comment_once(post, qualification, strategy, recent_comments, campa
 
 def suggest_campaign_discovery(campaign: Campaign) -> dict:
     prompt = """
-Suggest a compact Reddit discovery setup for this campaign. Return 6 to 10
-search queries covering direct need, pain points, competitor alternatives, and
-product comparisons. Put exact multi-word searches in double quotes. Suggest
-3 to 8 core subreddit names without the r/ prefix, plus compact adjacent and
+Suggest a high-intent Reddit discovery setup for this campaign. Return 10 to 16
+short keyword-focused search queries covering recommendations, active evaluation,
+buyer pain, competitor migration, product comparisons, replacement, pricing,
+upgrade, implementation, and urgent problem language. Include the campaign product
+in some queries, named competitors in others, and buyer problems without a brand in
+others. OpenAI will evaluate semantic fit afterward, so discovery should favor recall
+without becoming generic industry news search. Use double
+quotes only for a brand name or an established multi-word product phrase when
+exact wording is genuinely useful. Suggest 3 to 8 core subreddit names without
+the r/ prefix, plus compact adjacent and
 watch-only community lists. Core communities should be appropriate for active
 opportunity monitoring. Watch-only communities may be useful for research but
 carry higher promotion risk. Positive and negative signals must help
@@ -464,7 +543,7 @@ Do not invent product capabilities or supported markets.
     )
     result = json.loads(content)
     return {
-        "keywords": [str(x) for x in result.get("keywords", [])][:12],
+        "keywords": [str(x) for x in result.get("keywords", [])][:24],
         "subreddits": [str(x).removeprefix("r/") for x in result.get("subreddits", [])][:10],
         "adjacent_subreddits": [
             str(x).removeprefix("r/") for x in result.get("adjacent_subreddits", [])
@@ -496,17 +575,26 @@ Market:
 - Only name supported countries or regions when the source provides evidence.
 - Use an empty country list when geography is unknown or appears global.
 - Infer site languages from the supplied text. Do not assume the customer's location.
+- Market signals guide semantic scoring. Missing location or customer details must never
+  block AI qualification. Explicit unsupported markets can reduce product or market fit.
 
 Discovery:
-- Return 8 to 12 diverse Reddit search queries. Reddit search is lexical, not semantic.
-- Cover brand, category, recommendation, alternative, comparison, pain-point, and replacement language.
-- Use quotes only for exact brand or established multi-word product phrases. Do not quote every query.
+- Return 10 to 16 short, high-intent Reddit search queries. Perplexity Search works best
+  with concise keyword-focused queries, while OpenAI performs the semantic qualification.
+- Cover explicit recommendations, active evaluation, alternatives, competitor migration,
+  replacement, pricing, upgrade, implementation, and urgent pain-point language.
+- Include the product name in some queries, competitor names in some queries, and buyer
+  problems without the product name in others.
+- Use quotes only for an exact brand or established multi-word product phrase. Do not quote every query.
+- Use 20 results per query as the coverage-first default; an operator can lower this later for a deliberately narrow campaign.
 - Suggest plausible subreddit names without r/. These are candidates, not verified rule claims.
 - Community notes must tell the operator to verify current subreddit rules before replying.
 
 Qualification:
 - Define concrete positive buying signals and negative/noise signals for this product.
 - Use a balanced default threshold unless the product is unusually sensitive or regulated.
+- Default to a seven-day window for timely buying intent. The operator can change it to
+  30 days when the category has lower Reddit volume.
 
 Engagement:
 - Write a helpful, concise, peer-to-peer tone instruction.
@@ -552,7 +640,6 @@ certifications, customer counts, or legal claims.
             "languages": _clean_generated_list(market.get("languages"), 10),
             "customer_signals": _clean_generated_list(market.get("customer_signals"), 15),
             "exclude_terms": _clean_generated_list(market.get("exclude_terms"), 15),
-            "require_market_signal": bool(market.get("require_market_signal")),
         },
         "discovery": {
             "keywords": generated_keywords,
@@ -659,13 +746,15 @@ def _chat_json(schema: dict, system_prompt: str, user_prompt: str, temperature: 
 
 
 def _campaign_context(campaign: Campaign) -> str:
-    return campaign.model_dump_json(indent=2)
+    payload = campaign.model_dump(mode="json")
+    return json.dumps(payload, indent=2)
 
 
 def _post_context(post: dict) -> str:
     return (
         f"Subreddit: r/{post['subreddit']}\nTitle: {post['title']}\n"
-        f"Body:\n{post.get('selftext') or '(empty)'}\nMatched query: {post.get('query') or ''}"
+        f"Body or search-provider excerpt:\n{post.get('selftext') or '(empty)'}\n"
+        f"Matched query: {post.get('query') or ''}"
     )
 
 
@@ -676,4 +765,3 @@ def _has_explicit_urgency(post: dict) -> bool:
 
 def _normalize(value: str) -> str:
     return re.sub(r"\s+", " ", value.lower()).strip()
-

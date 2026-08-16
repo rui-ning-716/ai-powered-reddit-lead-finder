@@ -69,11 +69,13 @@ class CampaignTest(unittest.TestCase):
         self.assertIn("Save and find opportunities", html)
         self.assertIn("AI adaptive scoring is on", html)
         self.assertIn("Generate the full setup from a product website", html)
-        self.assertIn("Search queries are Reddit keyword phrases", html)
+        self.assertIn("Perplexity combines semantic and keyword retrieval", html)
         self.assertIn("Reply Opportunities", html)
         self.assertIn("Product Setup", html)
         self.assertIn("Performance", html)
         self.assertNotIn("Relevance weight", html)
+        self.assertNotIn("Require at least one country", html)
+        self.assertNotIn('id="require-market"', html)
 
     def test_dashboard_shows_post_excerpt_and_localizes_timestamp(self):
         lead = {
@@ -109,7 +111,7 @@ class ScannerTest(unittest.TestCase):
         self.assertFalse(accepted)
         self.assertIsNone(result)
 
-    def test_unqualified_post_never_notifies(self):
+    def test_unqualified_post_is_saved_for_skipped_review_but_never_notifies(self):
         settings = SimpleNamespace(max_ai_posts_per_scan=8)
         qualification = {
             "is_qualified": False, "lead_score": 0.2, "market_fit": True,
@@ -120,13 +122,28 @@ class ScannerTest(unittest.TestCase):
         ), patch("app.scanner.has_seen_post", return_value=False), patch(
             "app.scanner.save_post"
         ), patch("app.scanner.evaluate_opportunity", return_value=qualification), patch(
+            "app.scanner.save_draft"
+        ) as save_draft, patch(
             "app.scanner.notify_new_lead"
         ) as notify, patch("app.scanner.get_fetch_stats", return_value={}):
             result = _run_scan_unlocked()
         self.assertEqual(result["qualification_skips"], 1)
+        self.assertEqual(save_draft.call_args.kwargs["status"], "skipped")
         notify.assert_not_called()
+
+    def test_ai_failure_does_not_mark_post_seen(self):
+        settings = SimpleNamespace(max_ai_posts_per_scan=8)
+        with patch("app.scanner.get_settings", return_value=settings), patch(
+            "app.scanner.search_posts", return_value=[post()]
+        ), patch("app.scanner.has_seen_post", return_value=False), patch(
+            "app.scanner.save_post"
+        ) as save, patch(
+            "app.scanner.evaluate_opportunity", side_effect=RuntimeError("temporary AI failure")
+        ), patch("app.scanner.get_fetch_stats", return_value={}):
+            result = _run_scan_unlocked()
+        self.assertEqual(result["errors"], 1)
+        save.assert_not_called()
 
 
 if __name__ == "__main__":
     unittest.main()
-

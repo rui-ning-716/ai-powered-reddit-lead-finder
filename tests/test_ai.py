@@ -1,8 +1,11 @@
 import unittest
+import json
+from unittest.mock import patch
 
 from app.ai import (
     COMMENT_PROMPT,
     conservative_strategy,
+    decide_response_strategy,
     is_opening_too_similar,
     validate_comment_for_strategy,
     validate_qualification,
@@ -32,14 +35,26 @@ class AITest(unittest.TestCase):
         self.assertTrue(result["is_qualified"])
         self.assertEqual(result["purchase_intent_score"], 0.8)
 
-    def test_poor_market_fit_disqualifies_high_score(self):
+    def test_market_fit_boolean_cannot_hard_reject_a_high_score(self):
+        campaign = get_campaign().model_copy(deep=True)
         payload = {
             "is_qualified": True, "lead_score": 0.95, "market_fit": False,
             "relevance_score": 1, "purchase_intent_score": 1, "product_fit_score": 1,
             "urgency_score": 1, "reachability_score": 1, "promotion_risk_score": 0,
             "market_fit_score": 0, "positive_signals": [], "negative_signals": [],
         }
-        self.assertFalse(validate_qualification(payload)["is_qualified"])
+        self.assertTrue(validate_qualification(payload, campaign=campaign)["is_qualified"])
+
+    def test_market_fit_is_not_a_hard_gate_when_checkbox_is_off(self):
+        campaign = get_campaign().model_copy(deep=True)
+        campaign.qualification.minimum_lead_score = 0.5
+        payload = {
+            "is_qualified": True, "market_fit": False,
+            "relevance_score": 1, "purchase_intent_score": 1, "product_fit_score": 1,
+            "urgency_score": 1, "reachability_score": 1, "promotion_risk_score": 0,
+            "market_fit_score": 0, "positive_signals": [], "negative_signals": [],
+        }
+        self.assertTrue(validate_qualification(payload, campaign=campaign)["is_qualified"])
 
     def test_lead_score_is_recalculated_from_dimensions(self):
         payload = {
@@ -50,7 +65,7 @@ class AITest(unittest.TestCase):
             "market_fit_score": 0.9, "positive_signals": [], "negative_signals": [],
         }
         result = validate_qualification(payload)
-        self.assertEqual(result["lead_score"], 0.71)
+        self.assertEqual(result["lead_score"], 0.72)
 
     def test_campaign_score_weights_and_penalties_change_final_score(self):
         campaign = get_campaign().model_copy(deep=True)
@@ -82,7 +97,7 @@ class AITest(unittest.TestCase):
             ["Pricing page or a stated budget", "Actively comparing vendors"],
         )
 
-    def test_ai_adaptive_priority_multiplies_positive_score_by_confidence(self):
+    def test_ai_adaptive_confidence_only_modestly_reduces_priority(self):
         campaign = get_campaign().model_copy(deep=True)
         campaign.qualification.scoring_mode = "ai_adaptive"
         campaign.qualification.score_model.promotion_risk_penalty = 0
@@ -96,7 +111,38 @@ class AITest(unittest.TestCase):
             "positive_signals": [], "negative_signals": [],
         }
         result = validate_qualification(payload, campaign=campaign)
-        self.assertEqual(result["lead_score"], 0.6)
+        self.assertEqual(result["lead_score"], 0.9)
+
+    def test_model_boolean_cannot_veto_score_that_passes_deterministic_checks(self):
+        campaign = get_campaign().model_copy(deep=True)
+        campaign.qualification.minimum_lead_score = 0.5
+        payload = {
+            "is_qualified": False, "market_fit": True,
+            "relevance_score": 0.9, "purchase_intent_score": 0.85,
+            "product_fit_score": 0.8, "urgency_score": 0.6,
+            "reachability_score": 0.8, "promotion_risk_score": 0.3,
+            "market_fit_score": 0.8, "evidence_confidence_score": 0.9,
+            "location": "", "positive_signals": ["reviewing an upgrade quote"],
+            "negative_signals": [],
+        }
+        result = validate_qualification(payload, campaign=campaign)
+        self.assertTrue(result["is_qualified"])
+        self.assertGreaterEqual(result["lead_score"], 0.5)
+
+    def test_low_purchase_intent_still_fails_even_when_other_scores_are_high(self):
+        campaign = get_campaign().model_copy(deep=True)
+        campaign.qualification.minimum_lead_score = 0.5
+        payload = {
+            "is_qualified": True, "market_fit": True,
+            "relevance_score": 0.9, "purchase_intent_score": 0.1,
+            "product_fit_score": 0.9, "urgency_score": 0.8,
+            "reachability_score": 0.9, "promotion_risk_score": 0,
+            "market_fit_score": 1, "evidence_confidence_score": 1,
+            "location": "", "positive_signals": [], "negative_signals": [],
+        }
+        result = validate_qualification(payload, campaign=campaign)
+        self.assertFalse(result["is_qualified"])
+        self.assertFalse(result["qualification_checks"]["purchase_intent"])
 
     def test_urgency_is_capped_without_explicit_time_signal(self):
         payload = {
@@ -166,6 +212,21 @@ class AITest(unittest.TestCase):
     def test_conservative_strategy_never_mentions_brand(self):
         self.assertFalse(conservative_strategy()["should_mention_brand"])
 
+    def test_low_risk_qualified_opportunity_gets_neutral_draft_strategy(self):
+        model_strategy = {
+            "response_type": "skip", "should_reply": False,
+            "should_mention_brand": False, "should_include_link": False,
+            "reason": "Brand reply may be promotional", "tone": "helpful",
+            "key_points": ["Explain migration tradeoffs"],
+        }
+        qualification = {"promotion_risk_score": 0.3, "reachability_score": 0.8}
+        post = {"subreddit": "CRM", "title": "Which CRM should we choose?", "selftext": "We are comparing options."}
+        with patch("app.ai._chat_json", return_value=json.dumps(model_strategy)):
+            result = decide_response_strategy(post, qualification)
+        self.assertEqual(result["response_type"], "expert_answer")
+        self.assertTrue(result["should_reply"])
+        self.assertFalse(result["should_mention_brand"])
+
     def test_campaign_suggestions_are_bounded_and_strip_subreddit_prefix(self):
         payload = {
             "keywords": [f'"query {i}"' for i in range(20)],
@@ -173,14 +234,11 @@ class AITest(unittest.TestCase):
             "positive_signals": ["asks for a recommendation"],
             "negative_signals": ["job listing"],
         }
-        import json
-        from unittest.mock import patch
         with patch("app.ai._chat_json", return_value=json.dumps(payload)):
             result = suggest_campaign_discovery(get_campaign())
-        self.assertEqual(len(result["keywords"]), 12)
+        self.assertEqual(len(result["keywords"]), 20)
         self.assertEqual(result["subreddits"][0], "startups")
 
 
 if __name__ == "__main__":
     unittest.main()
-

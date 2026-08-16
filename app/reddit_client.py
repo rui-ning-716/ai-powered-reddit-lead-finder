@@ -562,22 +562,10 @@ def _clean_html(value: str) -> str:
 
 
 def _is_market_candidate(post: dict, campaign: Campaign | None = None) -> bool:
-    market = (campaign or get_campaign()).market
-    text = " ".join(
-        [
-            post.get("title") or "",
-            post.get("selftext") or "",
-            post.get("subreddit") or "",
-            post.get("query") or "",
-        ]
-    )
-    normalized = text.casefold()
-    if any(term.casefold() in normalized for term in market.exclude_terms):
-        return False
-    if not market.require_market_signal:
-        return True
-    signals = [*market.customer_signals, *market.countries]
-    return any(signal.casefold() in normalized for signal in signals)
+    del post, campaign
+    # Legacy RSS compatibility path. Market and exclusion evidence is evaluated
+    # semantically after discovery, never as an exact pre-AI string gate.
+    return True
 
 
 def _is_recent_candidate(post: dict, campaign: Campaign | None = None) -> bool:

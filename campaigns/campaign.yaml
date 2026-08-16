@@ -21,7 +21,6 @@ market:
   languages: [English]
   customer_signals: [startup, founder, product manager, remote team, SaaS]
   exclude_terms: []
-  require_market_signal: false
 discovery:
   keywords:
     - '"meeting notes tool"'
@@ -89,4 +88,3 @@ engagement:
   tone: Helpful, concise, transparent, and non-salesy
   disclosure: I work on ExampleNotes, so I may be biased.
   max_words: 140
-

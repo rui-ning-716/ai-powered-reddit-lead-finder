@@ -26,7 +26,6 @@ class MarketConfig(BaseModel):
     languages: list[str] = Field(default_factory=list)
     customer_signals: list[str] = Field(default_factory=list)
     exclude_terms: list[str] = Field(default_factory=list)
-    require_market_signal: bool = False
 
 
 class DiscoveryConfig(BaseModel):
