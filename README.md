@@ -112,8 +112,8 @@ OpenAI analysis per scan. Manual scans are also available.
 ## Quick start with Docker
 
 ```bash
-git clone https://github.com/rui-ning-716/reddit-lead-finder.git
-cd reddit-lead-finder
+git clone https://github.com/rui-ning-716/ai-powered-reddit-lead-finder.git
+cd ai-powered-reddit-lead-finder
 cp .env.example .env
 ```
 
