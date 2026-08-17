@@ -9,6 +9,32 @@ personalized reply drafts for human review.
 It is an open-source, self-hosted, human-in-the-loop Reddit marketing and lead
 discovery tool. It never posts comments, sends DMs, or votes automatically.
 
+## Product walkthrough
+
+### 1. From product URL to AI-powered Reddit workflow
+
+<p align="center">
+  <img src="./intro.png" alt="Reddit Lead Finder product overview" width="100%">
+</p>
+
+Paste in a product website, then turn it into a complete Reddit marketing workflow: campaign setup, discovery, AI scoring, reply drafting, notifications, and human review.
+
+### 2. AI-generated campaign setup
+
+<p align="center">
+  <img src="./campaign-setup.png" alt="AI-generated Reddit campaign setup" width="100%">
+</p>
+
+AI creates an editable campaign with target customers, value propositions, competitors, buyer signals, search queries, and relevant subreddits.
+
+### 3. Review high-intent opportunities and reply drafts
+
+<p align="center">
+  <img src="./dashboard-preview.png" alt="Reddit opportunity dashboard with AI scoring and reply drafts" width="100%">
+</p>
+
+Review qualified conversations, understand the AI scoring, edit personalized reply drafts, and publish manually when appropriate.
+
 ## From product URL to reply draft
 
 1. **Add a product URL**
