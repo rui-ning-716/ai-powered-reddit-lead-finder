@@ -1,7 +1,5 @@
 # Reddit Lead Finder
 
-[中文说明](README_CN.md)
-
 **Turn one product URL into a complete Reddit marketing workflow.**
 
 Paste a public product website. Reddit Lead Finder researches the product, builds a
