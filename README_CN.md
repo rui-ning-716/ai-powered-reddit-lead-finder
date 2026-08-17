@@ -135,8 +135,8 @@ docker compose up --build
 ## 不使用 Docker，在 Mac 本地运行
 
 ```bash
-git clone https://github.com/rui-ning-716/reddit-lead-finder.git
-cd reddit-lead-finder
+git clone https://github.com/rui-ning-716/ai-powered-reddit-lead-finder.git
+cd ai-powered-reddit-lead-finder
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
