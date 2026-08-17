@@ -109,8 +109,8 @@ Apify 是可选兜底。只有启用 Apify，并且 Perplexity 失败或有效�
 ## 使用 Docker 快速开始
 
 ```bash
-git clone https://github.com/rui-ning-716/reddit-lead-finder.git
-cd reddit-lead-finder
+git clone https://github.com/rui-ning-716/ai-powered-reddit-lead-finder.git
+cd ai-powered-reddit-lead-finder
 cp .env.example .env
 ```
 
