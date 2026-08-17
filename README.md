@@ -164,8 +164,8 @@ Open [http://localhost:8000](http://localhost:8000).
 ## Run locally without Docker
 
 ```bash
-git clone https://github.com/rui-ning-716/reddit-lead-finder.git
-cd reddit-lead-finder
+git clone https://github.com/rui-ning-716/ai-powered-reddit-lead-finder.git
+cd ai-powered-reddit-lead-finder
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
