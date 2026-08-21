@@ -93,6 +93,66 @@ def run_scan(manual: bool = False, campaign_key: str | None = None) -> dict:
         _SCAN_LOCK.release()
 
 
+_LAST_SCAN_RESULT: dict = {}
+
+
+def is_scan_running() -> bool:
+    """True while a discovery scan currently holds the scan lock."""
+    return _SCAN_LOCK.locked()
+
+
+def last_scan_result() -> dict:
+    """The most recent background scan result, or an empty dict if none has run."""
+    return dict(_LAST_SCAN_RESULT)
+
+
+def manual_scan_cooldown_remaining() -> int:
+    """Seconds left on the manual-scan cooldown; 0 when a manual scan is allowed."""
+    settings = get_settings()
+    cooldown_seconds = settings.min_manual_scan_interval_minutes * 60
+    if _LAST_MANUAL_SCAN_AT is None or cooldown_seconds <= 0:
+        return 0
+    remaining = cooldown_seconds - (time.monotonic() - _LAST_MANUAL_SCAN_AT)
+    return max(0, int(remaining))
+
+
+def start_scan_in_background(manual: bool = True, campaign_key: str | None = None) -> dict:
+    """Launch a scan on a worker thread and return immediately.
+
+    A scan (discovery + AI qualification) takes tens of seconds to minutes.
+    Running it inline blocks the request that triggered it, so the dashboard
+    appears frozen until it finishes. Do the instant admission checks up front
+    for useful feedback, then hand the actual work to a daemon thread. run_scan
+    still owns the authoritative lock and cooldown enforcement inside the thread.
+    """
+    if is_scan_running():
+        return {"status": "already_running", "message": "A discovery scan is already running."}
+    if manual:
+        remaining = manual_scan_cooldown_remaining()
+        if remaining > 0:
+            return {
+                "status": "cooldown",
+                "message": "A manual scan ran recently. Please wait before scanning again.",
+                "retry_after_seconds": remaining,
+            }
+
+    def _worker() -> None:
+        try:
+            result = run_scan(manual=manual, campaign_key=campaign_key)
+        except Exception as exc:  # a crashing worker thread must not vanish silently
+            logger.exception("background scan failed: %s", exc)
+            result = {"status": "provider_error", "message": str(exc)}
+        _LAST_SCAN_RESULT.clear()
+        _LAST_SCAN_RESULT.update(result)
+
+    # Mark running immediately so a poll issued before the thread acquires the
+    # lock does not mistake the tiny startup gap for a finished scan.
+    _LAST_SCAN_RESULT.clear()
+    _LAST_SCAN_RESULT.update({"status": "running"})
+    threading.Thread(target=_worker, name="scan-now", daemon=True).start()
+    return {"status": "started", "message": "Scan started in the background."}
+
+
 def _combine_campaign_results(results: list[dict]) -> dict:
     numeric_fields = [
         "scanned",
