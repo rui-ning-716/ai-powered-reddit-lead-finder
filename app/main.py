@@ -27,7 +27,13 @@ from app.dashboard import render_dashboard, render_first_run
 from app.db import init_db, lead_stats, list_leads, mark_draft_status, move_draft_to_campaign
 from app.discovery import DiscoveryError, research_website_with_perplexity
 from app.report import render_report, report_csv
-from app.scanner import run_scan, run_when_scan_idle
+from app.scanner import (
+    is_scan_running,
+    last_scan_result,
+    run_scan,
+    run_when_scan_idle,
+    start_scan_in_background,
+)
 from app.website import WebsiteReadError, normalize_website_url, research_product_website
 
 logging.basicConfig(level=logging.INFO)
@@ -324,7 +330,16 @@ def test_campaign(request: CampaignTestRequest) -> dict:
 def scan_now(campaign: str | None = None) -> dict:
     if campaign:
         _campaign_record_or_404(campaign)
-    return run_scan(manual=True, campaign_key=campaign)
+    # Launch on a worker thread and return immediately so the dashboard stays
+    # responsive during the scan. Poll /scan-status for completion.
+    return start_scan_in_background(manual=True, campaign_key=campaign)
+
+
+@app.get("/scan-status")
+def scan_status() -> dict:
+    result = last_scan_result()
+    running = is_scan_running() or result.get("status") == "running"
+    return {"running": running, "last_result": result}
 
 
 @app.get("/leads")
