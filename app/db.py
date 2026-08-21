@@ -439,7 +439,12 @@ def list_leads(
         if campaign_key:
             sql += " WHERE drafts.campaign_key = ?"
             params.append(campaign_key)
-        sql += " ORDER BY drafts.created_at DESC LIMIT ?"
+        # Keep actionable leads (new/approved/replied) ahead of skipped ones so
+        # a high volume of recent skips can't push them past the LIMIT window and
+        # out of the rendered card list. Without this, the dashboard stat counts
+        # (computed over all rows) disagree with what the status filters can show
+        # (which only toggle the rows that were actually rendered).
+        sql += " ORDER BY (drafts.status = 'skipped') ASC, drafts.created_at DESC LIMIT ?"
         params.append(limit)
         return conn.execute(sql, params).fetchall()
 
