@@ -385,7 +385,10 @@ def _request_json(
                     exc.code,
                 ) from exc
             _sleep_for_retry(exc, attempt)
-        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except (URLError, TimeoutError, ConnectionError, json.JSONDecodeError) as exc:
+            # ConnectionError covers RemoteDisconnected/ConnectionReset, which the
+            # search provider raises intermittently when it drops a keep-alive
+            # connection mid-response. Retry it instead of surfacing a 500.
             last_error = exc
             if attempt + 1 >= attempts:
                 raise ProviderRequestError(
